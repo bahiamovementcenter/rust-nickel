@@ -1,0 +1,26 @@
+[package]
+name = "nickel-embed"
+version = "0.1.0"
+description = "Embed the Nickel configuration language in Rust programs"
+keywords = ["configuration", "language", "nickel"]
+readme = "../README.md"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+# nickel-lang-core breaks its API between minor releases, so it is pinned
+# exactly and bumped deliberately.
+nickel-lang-core = { version = "=0.19.0", default-features = false }
+nickel-lang-vector = "0.2"
+codespan-reporting = { version = "0.13", features = ["serialization"] }
+indexmap = "2.8"
+malachite = "0.9"
+serde = "1"
+serde_json = "1"
+serde_yaml = "0.9"
+toml = "1"
+
+[dev-dependencies]
+serde_json = "1"
+serde = { version = "1", features = ["derive"] }
