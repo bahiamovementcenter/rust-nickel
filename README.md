@@ -25,7 +25,7 @@ let server: Server = ctx
 
 ## Status
 
-Phases 1 to 3 and 5 of 5; phase 4 is in progress.
+All five phases are done.
 
 - **Phase 1:** parity with `nickel-lang` 2.2 (`Context`, `Expr`, typed accessors, JSON/YAML/TOML
   output, `serde` decoding, trace output, import paths, error formats), plus `Expr::kind()`,
@@ -60,7 +60,7 @@ let info = program.query()?;                      // nickel query: doc, contract
   - `Program::docs()`, like `nickel doc`: documented fields, plus JSON and Markdown renderings
     (Cargo feature `doc`).
 
-- **Phase 4 (in progress):** bindings for other languages.
+- **Phase 4:** bindings for other languages.
   - [`nickel-embed-nif`](nickel-embed-nif): an Erlang NIF, the in-process backend of the Gleam
     package [`nickel`](https://github.com/bahiamovementcenter/gleam-nickel). Each session runs on
     its own thread, owning one `Program` and the expressions taken from it, and replies to the
@@ -68,7 +68,10 @@ let info = program.query()?;                      // nickel query: doc, contract
     Erlang as resources, which gives lazy, go-nickel-style evaluation; values convert to Gleam
     terms with exact integers. Build it with `cargo build --release -p nickel-embed-nif` or
     `nix build .#nickel-embed-nif`; `nickel-embed-nif/test/run.sh` runs its Erlang tests.
-  - A C API superset of `nickel_lang.h`, for go-nickel: next.
+  - [`nickel-embed-capi`](nickel-embed-capi): a C library whose header is a superset of Nickel's
+    own `nickel_lang.h`. Programs built for Nickel's C API, go-nickel included, work with it
+    unchanged, and new functions expose programs, field metadata, structured diagnostics,
+    warnings, docs and formatting.
 
 - **Phase 5:** package imports (`import foo`).
   - `PackageMap` maps package names to directories, for the program and for each package's own

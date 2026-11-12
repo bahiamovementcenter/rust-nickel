@@ -1,0 +1,17 @@
+# Same settings as Nickel's own nickel-lang-c, so the declarations it shares with go-nickel's
+# vendored header come out identical. Regenerate with:
+#   cbindgen --config nickel-embed-capi/cbindgen.toml --crate nickel-embed-capi --output nickel-embed-capi/include/nickel_lang.h
+header = "// SPDX-License-Identifier: MIT"
+sys_includes = ["stdint.h"]
+no_includes = true
+include_guard = "NICKEL_LANG_H"
+tab_width = 4
+style = "Type"
+language = "C"
+cpp_compat = true
+
+[export]
+
+[const]
+allow_static_const = false
+allow_constexpr = false
