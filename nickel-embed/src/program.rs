@@ -521,6 +521,14 @@ impl Program {
             .map_err(|e| self.export_error(e))
     }
 
+    /// Serializes an expression from this program, such as a field reached through
+    /// [`Self::eval_shallow`]. It must be fully evaluated and contain no enum variants or
+    /// functions; errors point into this program's sources.
+    pub fn export_expr(&self, expr: &Expr, format: ExportFormat) -> Result<String, Error> {
+        expr.export(format.to_core())
+            .map_err(|e| self.export_error(e))
+    }
+
     /// Like [`Self::export`], writing to `out`.
     pub fn export_to(&mut self, format: ExportFormat, mut out: impl Write) -> Result<(), Error> {
         let text = self.export(format)?;

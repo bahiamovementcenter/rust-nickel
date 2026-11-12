@@ -3,8 +3,8 @@
 Embed the [Nickel](https://nickel-lang.org) configuration language in Rust programs.
 
 `nickel-embed` aims to cover Nickel's whole embedding surface with an idiomatic, stable Rust API,
-and to be the native core for Nickel bindings in other languages (a C API and an Erlang/Gleam
-NIF are planned).
+and to be the native core for Nickel bindings in other languages (an Erlang/Gleam NIF is here;
+a C API is planned).
 
 Its core API keeps the names of Nickel's official [`nickel-lang`](https://crates.io/crates/nickel-lang)
 crate, from which it was derived, and runs on the latest `nickel-lang-core` (0.19). Later releases
@@ -25,7 +25,7 @@ let server: Server = ctx
 
 ## Status
 
-Phase 3 of 5.
+Phase 4 of 5.
 
 - **Phase 1:** parity with `nickel-lang` 2.2 (`Context`, `Expr`, typed accessors, JSON/YAML/TOML
   output, `serde` decoding, trace output, import paths, error formats), plus `Expr::kind()`,
@@ -61,6 +61,16 @@ let info = program.query()?;                      // nickel query: doc, contract
     (Cargo feature `doc`).
 
 `Context`, `Expr`, `Program` and `Error` are not `Send`: use one per thread.
+
+- **Phase 4 (in progress):** bindings for other languages.
+  - [`nickel-embed-nif`](nickel-embed-nif): an Erlang NIF, the in-process backend of the Gleam
+    package [`nickel`](https://github.com/bahiamovementcenter/gleam-nickel). Each session runs on
+    its own thread, owning one `Program` and the expressions taken from it, and replies to the
+    calling Erlang process with a message, so schedulers are never blocked. Expressions cross into
+    Erlang as resources, which gives lazy, go-nickel-style evaluation; values convert to Gleam
+    terms with exact integers. Build it with `cargo build --release -p nickel-embed-nif` or
+    `nix build .#nickel-embed-nif`; `nickel-embed-nif/test/run.sh` runs its Erlang tests.
+  - A C API superset of `nickel_lang.h`, for go-nickel: next.
 
 ## Development
 
