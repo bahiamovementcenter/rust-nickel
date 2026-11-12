@@ -12,6 +12,9 @@ use std::{
 
 use nickel_lang_core::{cache::normalize_path, identifier::Ident, package::PackageMap as CoreMap};
 
+/// The name of a package manifest, as `nickel-lang-package` spells it.
+const MANIFEST_NAME: &str = "Nickel-pkg.ncl";
+
 /// Where package imports (`import foo`) are found.
 ///
 /// Each package is a directory, and importing it evaluates its `main.ncl`. Names are local to the
@@ -94,6 +97,15 @@ impl PackageMap {
         deps
     }
 
+    /// Finds the manifest for `dir`: the nearest `Nickel-pkg.ncl` in it or a parent
+    /// directory, as the `nickel` command looks for one.
+    pub fn find_manifest(dir: impl AsRef<Path>) -> Option<PathBuf> {
+        dir.as_ref()
+            .ancestors()
+            .map(|dir| dir.join(MANIFEST_NAME))
+            .find(|path| path.is_file())
+    }
+
     pub(crate) fn into_core(self) -> CoreMap {
         self.inner
     }
@@ -117,9 +129,7 @@ mod manifest {
     use std::path::{Path, PathBuf};
 
     use nickel_lang_core::{error::IOError, files::Files};
-    use nickel_lang_package::{
-        ManifestFile, config::Config, error::Error as PackageError, index, manifest::MANIFEST_NAME,
-    };
+    use nickel_lang_package::{ManifestFile, config::Config, error::Error as PackageError, index};
 
     use super::PackageMap;
     use crate::{Error, ErrorKind};
@@ -143,15 +153,6 @@ mod manifest {
             cache_dir: impl Into<PathBuf>,
         ) -> Result<Self, Error> {
             resolve(manifest.as_ref(), Some(cache_dir.into()))
-        }
-
-        /// Finds the manifest for `dir`: the nearest `Nickel-pkg.ncl` in it or a parent
-        /// directory, as the `nickel` command looks for one. Requires the `packages` feature.
-        pub fn find_manifest(dir: impl AsRef<Path>) -> Option<PathBuf> {
-            dir.as_ref()
-                .ancestors()
-                .map(|dir| dir.join(MANIFEST_NAME))
-                .find(|path| path.is_file())
         }
     }
 

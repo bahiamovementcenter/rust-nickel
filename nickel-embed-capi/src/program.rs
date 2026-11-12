@@ -24,7 +24,7 @@ pub struct nickel_program_builder {
 }
 
 impl nickel_program_builder {
-    fn update(&mut self, f: impl FnOnce(ProgramBuilder) -> ProgramBuilder) {
+    pub(crate) fn update(&mut self, f: impl FnOnce(ProgramBuilder) -> ProgramBuilder) {
         self.inner = f(mem::take(&mut self.inner));
     }
 }
@@ -172,7 +172,7 @@ pub enum nickel_merge_priority {
     NICKEL_MERGE_PRIORITY_FORCE = 3,
 }
 
-unsafe fn builder<'a>(b: *mut nickel_program_builder) -> &'a mut nickel_program_builder {
+pub(crate) unsafe fn builder<'a>(b: *mut nickel_program_builder) -> &'a mut nickel_program_builder {
     // Safety: `b` came from `nickel_program_builder_alloc`.
     unsafe { b.as_mut().expect("null nickel_program_builder") }
 }

@@ -29,6 +29,8 @@ pub enum nickel_error_kind {
     NICKEL_ERROR_KIND_IO = 7,
     /// A failure with no more specific kind.
     NICKEL_ERROR_KIND_OTHER = 8,
+    /// A package manifest couldn't be read or its dependencies resolved or fetched.
+    NICKEL_ERROR_KIND_PACKAGE = 9,
 }
 
 /// How serious a [`nickel_diagnostic`] is.
@@ -140,6 +142,7 @@ pub unsafe extern "C" fn nickel_error_get_kind(err: *const nickel_error) -> nick
         ErrorKind::Eval => nickel_error_kind::NICKEL_ERROR_KIND_EVAL,
         ErrorKind::Export => nickel_error_kind::NICKEL_ERROR_KIND_EXPORT,
         ErrorKind::Io => nickel_error_kind::NICKEL_ERROR_KIND_IO,
+        ErrorKind::Package => nickel_error_kind::NICKEL_ERROR_KIND_PACKAGE,
         _ => nickel_error_kind::NICKEL_ERROR_KIND_OTHER,
     }
 }

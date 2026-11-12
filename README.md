@@ -80,7 +80,11 @@ let info = program.query()?;                      // nickel query: doc, contract
   - With the Cargo feature `packages` (off by default: it pulls in `gix`),
     `PackageMap::from_manifest` reads a `Nickel-pkg.ncl` manifest like `nickel` does: it resolves
     versions, fetches git and index dependencies into the cache and writes `Nickel-pkg.lock`.
-    `PackageMap::find_manifest` finds the nearest manifest. Failures have `ErrorKind::Package`.
+    `PackageMap::find_manifest` (in every build) finds the nearest manifest. Failures have
+    `ErrorKind::Package`.
+  - The C library has the same as `nickel_package_map_*` (with `packages` on by default there),
+    and the NIF takes a manifest or a package list when it builds a program, for gleam-nickel's
+    native backend.
     Nickel's package manager is still experimental (`package-experimental` in the `nickel`
     command), so manifest and lock formats may change; it also prints a few status lines to
     standard error that can't be turned off.

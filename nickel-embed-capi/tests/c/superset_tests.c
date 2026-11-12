@@ -348,6 +348,56 @@ static void test_warnings_and_import_paths(void) {
   nickel_program_builder_free(b);
 }
 
+static void test_packages(void) {
+  nickel_package_map *map = nickel_package_map_alloc();
+  nickel_error *err = nickel_error_alloc();
+  assert(nickel_package_map_add_package(map, "app", FIXTURES "/packages/app", err) == NICKEL_RESULT_OK);
+  assert(nickel_package_map_add_package(map, "util", FIXTURES "/packages/util-a", err) == NICKEL_RESULT_OK);
+  // Inside `app`, `util` is another package.
+  assert(nickel_package_map_add_dependency(map, FIXTURES "/packages/app", "util",
+                                           FIXTURES "/packages/util-b", err) == NICKEL_RESULT_OK);
+  assert(nickel_package_map_package_count(map) == 2);
+  nickel_string *name = nickel_string_alloc();
+  assert(nickel_package_map_package(map, 1, name, NULL));
+  assert_string(name, "util");
+  assert(!nickel_package_map_package(map, 2, name, NULL));
+
+  // A context.
+  nickel_context *ctx = nickel_context_alloc();
+  nickel_context_set_package_map(ctx, map);
+  nickel_expr *expr = nickel_expr_alloc();
+  assert(nickel_context_eval_deep(ctx, "(import app).inner", expr, err) == NICKEL_RESULT_OK);
+  const char *s;
+  uintptr_t len = nickel_expr_as_str(expr, &s);
+  assert(str_eq(s, len, "b"));
+  nickel_context_free(ctx);
+
+  // A program.
+  nickel_program_builder *b = nickel_program_builder_alloc();
+  nickel_program_builder_add_source(b, "(import util).name", NULL, NICKEL_INPUT_FORMAT_AUTO, NULL);
+  nickel_program_builder_set_package_map(b, map);
+  nickel_package_map_free(map);  // the builder has its own copy
+  nickel_program *p = build(b);
+  assert(nickel_program_eval_deep(p, expr, err) == NICKEL_RESULT_OK);
+  len = nickel_expr_as_str(expr, &s);
+  assert(str_eq(s, len, "a"));
+  nickel_program_free(p);
+  nickel_program_builder_free(b);
+
+  // Without a map, a package import is an import error.
+  ctx = nickel_context_alloc();
+  assert(nickel_context_eval_deep(ctx, "import app", NULL, err) == NICKEL_RESULT_ERR);
+  assert(nickel_error_get_kind(err) == NICKEL_ERROR_KIND_IMPORT);
+  nickel_context_free(ctx);
+
+  // There's no manifest above the fixtures in the repository.
+  assert(!nickel_package_map_find_manifest(FIXTURES "/packages/app", name));
+
+  nickel_string_free(name);
+  nickel_expr_free(expr);
+  nickel_error_free(err);
+}
+
 static void test_docs_and_format(void) {
   nickel_program_builder *b = nickel_program_builder_alloc();
   nickel_error *err = nickel_error_alloc();
@@ -401,6 +451,7 @@ int main(void) {
   test_typecheck_and_parse();
   test_diagnostics();
   test_warnings_and_import_paths();
+  test_packages();
   test_docs_and_format();
   test_fresh_expr_is_null();
   puts("superset tests passed");

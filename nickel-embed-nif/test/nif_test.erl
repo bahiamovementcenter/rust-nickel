@@ -13,8 +13,9 @@ session(Code, Overrides) ->
     {ok, nil} = call(S, {build, options([{code, Code, <<>>}], Overrides)}),
     S.
 
-options(Inputs, Overrides) ->
-    {options, Inputs, [], [], [], Overrides, [], true}.
+options(Inputs, Overrides) -> options(Inputs, Overrides, none).
+options(Inputs, Overrides, Manifest) ->
+    {options, Inputs, [], [], [], Overrides, [], true, Manifest}.
 
 core_version_test() ->
     ?assertMatch(<<"0.", _/binary>>, nickel_embed_nif:core_version()).
@@ -94,7 +95,7 @@ foreign_expression_test() ->
 query_test() ->
     S = nickel_embed_nif:new_session(),
     Code = <<"{ server | doc \"The server\" = { port | Number | default = 80 } }">>,
-    {ok, nil} = call(S, {build, {options, [{code, Code, <<>>}], [], [], [], [], [<<"server">>], false}}),
+    {ok, nil} = call(S, {build, {options, [{code, Code, <<>>}], [], [], [], [], [<<"server">>], false, none}}),
     {ok, {field_metadata, {some, <<"The server">>}, none, [], false, false, {numeric_priority, <<"0">>},
           [<<"port">>], {some, _}}} = call(S, query).
 
@@ -141,7 +142,7 @@ lazy_to_value_test() ->
 
 inline_contract_test() ->
     S = nickel_embed_nif:new_session(),
-    Opts = {options, [{code, <<"{ port = -1 }">>, <<>>}], [], [], [<<"{ port | std.number.Nat }">>], [], [], false},
+    Opts = {options, [{code, <<"{ port = -1 }">>, <<>>}], [], [], [<<"{ port | std.number.Nat }">>], [], [], false, none},
     {ok, nil} = call(S, {build, Opts}),
     ?assertMatch({error, {nickel_failure, {some, contract_violation}, _, _}}, call(S, eval_value)).
 
@@ -160,3 +161,36 @@ pending_contract_test() ->
     {ok, {record, [{<<"port">>, {some, Port}}]}} = call(S, {inspect, E}),
     ?assertMatch({error, {nickel_failure, {some, contract_violation}, _, _}},
                  call(S, {force_expr, Port})).
+
+manifest(Name, Dependencies) ->
+    <<"{ name = \"", Name/binary, "\", description = \"test\", version = \"0.1.0\", ",
+      "authors = [\"nif\"], minimal_nickel_version = \"1.9.0\", ",
+      "dependencies = { ", Dependencies/binary, " } } | std.package.Manifest">>.
+
+package_manifest_test() ->
+    Dir = string:trim(os:cmd("mktemp -d")),
+    App = filename:join(Dir, "app"),
+    Lib = filename:join(Dir, "lib"),
+    ok = filelib:ensure_path(App),
+    ok = filelib:ensure_path(Lib),
+    ok = file:write_file(filename:join(App, "Nickel-pkg.ncl"), manifest(<<"app">>, <<"lib = 'Path \"../lib\"">>)),
+    ok = file:write_file(filename:join(App, "main.ncl"), <<"(import lib).value">>),
+    ok = file:write_file(filename:join(Lib, "Nickel-pkg.ncl"), manifest(<<"lib">>, <<>>)),
+    ok = file:write_file(filename:join(Lib, "main.ncl"), <<"{ value = 42 }">>),
+    S = nickel_embed_nif:new_session(),
+    Main = list_to_binary(filename:join(App, "main.ncl")),
+    ManifestPath = list_to_binary(filename:join(App, "Nickel-pkg.ncl")),
+    {ok, nil} = call(S, {build, options([{file, Main}], [], {some, ManifestPath})}),
+    ?assertEqual({ok, {int, 42}}, call(S, eval_value)),
+    ?assert(filelib:is_regular(filename:join(App, "Nickel-pkg.lock"))),
+    %% Without the manifest, the package import fails.
+    S2 = nickel_embed_nif:new_session(),
+    {ok, nil} = call(S2, {build, options([{file, Main}], [])}),
+    ?assertMatch({error, {nickel_failure, {some, import_error}, _, _}}, call(S2, eval_value)).
+
+bad_manifest_test() ->
+    Dir = string:trim(os:cmd("mktemp -d")),
+    ok = file:write_file(filename:join(Dir, "Nickel-pkg.ncl"), <<"{ name = 1 } | std.package.Manifest">>),
+    S = nickel_embed_nif:new_session(),
+    Opts = options([{code, <<"1">>, <<>>}], [], {some, list_to_binary(filename:join(Dir, "Nickel-pkg.ncl"))}),
+    ?assertMatch({error, {nickel_failure, {some, package_error}, [_ | _], _}}, call(S, {build, Opts})).
