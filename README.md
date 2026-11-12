@@ -25,7 +25,7 @@ let server: Server = ctx
 
 ## Status
 
-Phase 2 of 5.
+Phase 3 of 5.
 
 - **Phase 1:** parity with `nickel-lang` 2.2 (`Context`, `Expr`, typed accessors, JSON/YAML/TOML
   output, `serde` decoding, trace output, import paths, error formats), plus `Expr::kind()`,
@@ -49,6 +49,16 @@ let info = program.query()?;                      // nickel query: doc, contract
 
   Inputs can be files, in-memory code or any reader, in Nickel, JSON, YAML, TOML or plain text.
   Records expose each field's metadata (`Record::field`, `Record::fields`).
+
+- **Phase 3:** structured errors and tooling:
+  - `Error::kind()` (`Parse`, `Import`, `Typecheck`, `Contract`, `Eval`, `Export`, `Io`) and
+    `Error::diagnostics()`, which gives each message with its severity, notes and labelled
+    source locations (file, byte range, 1-based line and column) as plain, serializable data.
+  - Warnings through a callback: `Context::with_warnings`, `ProgramBuilder::on_warning`.
+  - `format(src)`, like `nickel format` (Cargo feature `format`, off by default: it pulls in
+    Topiary and tree-sitter).
+  - `Program::docs()`, like `nickel doc`: documented fields, plus JSON and Markdown renderings
+    (Cargo feature `doc`).
 
 `Context`, `Expr`, `Program` and `Error` are not `Send`: use one per thread.
 

@@ -8,6 +8,15 @@ edition.workspace = true
 license.workspace = true
 repository.workspace = true
 
+[features]
+# The Nickel formatter (Topiary and tree-sitter): heavy, so off by default.
+format = ["nickel-lang-core/format"]
+# Documentation extraction, as JSON or Markdown.
+doc = ["nickel-lang-core/doc"]
+
+[package.metadata.docs.rs]
+all-features = true
+
 [dependencies]
 # nickel-lang-core breaks its API between minor releases, so it is pinned
 # exactly and bumped deliberately.
@@ -16,7 +25,7 @@ nickel-lang-vector = "0.2"
 codespan-reporting = { version = "0.13", features = ["serialization"] }
 indexmap = "2.8"
 malachite = "0.9"
-serde = "1"
+serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 serde_yaml = "0.9"
 toml = "1"
