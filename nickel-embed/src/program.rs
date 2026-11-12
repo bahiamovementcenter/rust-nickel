@@ -11,7 +11,7 @@ use std::{
 
 use nickel_lang_core::{
     cache::{CacheHub, InputFormat as CoreInputFormat},
-    error::{Error as NickelCoreError, IOError, NullReporter, PointedExportErrorData},
+    error::{Error as NickelCoreError, IOError, PointedExportErrorData},
     eval::{Closure, cache::CacheImpl},
     files::Files,
     identifier::{Ident, LocIdent},
@@ -24,7 +24,7 @@ use nickel_lang_core::{
     typecheck::TypecheckMode as CoreTypecheckMode,
 };
 
-use crate::{Error, Expr, FieldMetadata};
+use crate::{Diagnostic, Error, Expr, FieldMetadata, diagnostic::WarningReporter};
 
 /// The format of a [`Source`].
 #[non_exhaustive]
@@ -154,11 +154,11 @@ impl Source {
         }
     }
 
-    fn add_to<W: Write + 'static>(
+    fn add_to<R, W>(
         self,
-        builder: CoreProgramBuilder<NullReporter, W>,
+        builder: CoreProgramBuilder<R, W>,
         index: usize,
-    ) -> CoreProgramBuilder<NullReporter, W> {
+    ) -> CoreProgramBuilder<R, W> {
         let default_name = || OsString::from(format!("<source {index}>"));
         match (self.kind, self.format, self.name) {
             // Core infers the format from the extension; that's the only way to keep the file's
@@ -328,6 +328,7 @@ pub struct ProgramBuilder {
     overrides: Vec<(FieldPath, String, Priority)>,
     field: FieldPath,
     trace: Box<dyn Write>,
+    warnings: WarningReporter,
 }
 
 impl Default for ProgramBuilder {
@@ -339,6 +340,7 @@ impl Default for ProgramBuilder {
             overrides: Vec::new(),
             field: FieldPath::default(),
             trace: Box::new(io::sink()),
+            warnings: WarningReporter::ignore(),
         }
     }
 }
@@ -419,6 +421,12 @@ impl ProgramBuilder {
         self
     }
 
+    /// Calls `on_warning` with each warning Nickel reports. Warnings are discarded otherwise.
+    pub fn on_warning(mut self, on_warning: impl FnMut(Diagnostic) + 'static) -> Self {
+        self.warnings = WarningReporter(Box::new(on_warning));
+        self
+    }
+
     /// Reads the sources and prepares the program.
     ///
     /// Fails if there are no sources or one can't be read. Parse and type errors are reported
@@ -426,6 +434,7 @@ impl ProgramBuilder {
     pub fn build(self) -> Result<Program, Error> {
         let mut builder = CoreProgramBuilder::new()
             .with_trace(self.trace)
+            .with_reporter(self.warnings)
             .add_import_paths(self.import_paths)
             .add_contract_paths(self.contract_files)
             .with_field_path(self.field.to_core())
@@ -547,6 +556,38 @@ impl Program {
         self.wrap_core(result)
     }
 
+    /// Extracts the documentation of the program's fields, like `nickel doc`.
+    ///
+    /// Fails if the program isn't a record.
+    #[cfg(feature = "doc")]
+    pub fn docs(&mut self) -> Result<Documentation, Error> {
+        let result = self.inner.extract_doc();
+        let extracted = self.wrap_core(result)?;
+        // Core's documentation type isn't nameable from outside the crate, so render it now.
+        let render = |result: Result<(), NickelCoreError>, out: Vec<u8>| {
+            result
+                .map(|()| String::from_utf8_lossy(&out).into_owned())
+                .map_err(|error| Error {
+                    error: Box::new(error),
+                    files: Files::empty(),
+                })
+        };
+        let mut json = Vec::new();
+        let json = render(extracted.write_json(&mut json), json)?;
+        let mut markdown = Vec::new();
+        let markdown = render(extracted.write_markdown(&mut markdown), markdown)?;
+        let entries = extracted
+            .docstrings()
+            .into_iter()
+            .map(|(path, doc)| (path.into_iter().collect(), doc.to_owned()))
+            .collect();
+        Ok(Documentation {
+            entries,
+            json,
+            markdown,
+        })
+    }
+
     fn wrap(
         &self,
         result: Result<nickel_lang_core::eval::value::NickelValue, NickelCoreError>,
@@ -607,5 +648,33 @@ impl fmt::Debug for FieldInfo {
             .field("not_exported", &m.not_exported())
             .field("subfields", &self.subfields())
             .finish()
+    }
+}
+
+/// Documentation extracted by [`Program::docs`].
+#[cfg(feature = "doc")]
+#[derive(Clone, Debug)]
+pub struct Documentation {
+    entries: Vec<(FieldPath, String)>,
+    json: String,
+    markdown: String,
+}
+
+#[cfg(feature = "doc")]
+impl Documentation {
+    /// Every documented field, with its path and documentation.
+    pub fn entries(&self) -> &[(FieldPath, String)] {
+        &self.entries
+    }
+
+    /// All fields with their types, contracts and documentation, as JSON, like
+    /// `nickel doc --format json`.
+    pub fn to_json(&self) -> &str {
+        &self.json
+    }
+
+    /// As Markdown, like `nickel doc --format markdown`.
+    pub fn to_markdown(&self) -> &str {
+        &self.markdown
     }
 }

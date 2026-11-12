@@ -30,8 +30,16 @@
 //! reference-counted. Use one `Context` per thread, and convert results to owned Rust data
 //! (with [`Expr::to_serde`] or [`Error::to_string_with`]) before sending them elsewhere.
 
+mod diagnostic;
+#[cfg(feature = "format")]
+mod format;
 mod program;
 
+pub use diagnostic::{Diagnostic, ErrorKind, Label, Location, Severity};
+#[cfg(feature = "format")]
+pub use format::{FormatError, format};
+#[cfg(feature = "doc")]
+pub use program::Documentation;
 pub use program::{
     ExportFormat, FieldInfo, FieldPath, InputFormat, Priority, Program, ProgramBuilder, Source,
     TypecheckMode,
@@ -177,6 +185,18 @@ impl Error {
 }
 
 impl Error {
+    /// What kind of failure this is.
+    pub fn kind(&self) -> ErrorKind {
+        ErrorKind::of(&self.error)
+    }
+
+    /// The error's messages and the source locations they point at, as data.
+    ///
+    /// This is the same content [`Self::format`] renders, without the rendering.
+    pub fn diagnostics(&self) -> Vec<Diagnostic> {
+        Diagnostic::from_error((*self.error).clone(), &self.files)
+    }
+
     /// Renders this error in the given format.
     ///
     /// If rendering fails, the returned string says so instead of the error.
@@ -247,6 +267,13 @@ impl Context {
     /// no effect.
     pub fn with_trace(mut self, trace: impl Write + 'static) -> Self {
         self.vm_ctxt.trace = Box::new(trace);
+        self
+    }
+
+    /// Calls `on_warning` with each warning Nickel reports while evaluating. Warnings are
+    /// discarded otherwise.
+    pub fn with_warnings(mut self, on_warning: impl FnMut(Diagnostic) + 'static) -> Self {
+        self.vm_ctxt.reporter = Box::new(diagnostic::WarningReporter(Box::new(on_warning)));
         self
     }
 
