@@ -25,7 +25,7 @@ let server: Server = ctx
 
 ## Status
 
-Phase 3 of 5.
+Phase 4 of 5.
 
 - **Phase 1:** parity with `nickel-lang` 2.2 (`Context`, `Expr`, typed accessors, JSON/YAML/TOML
   output, `serde` decoding, trace output, import paths, error formats), plus `Expr::kind()`,
@@ -59,6 +59,12 @@ let info = program.query()?;                      // nickel query: doc, contract
     Topiary and tree-sitter).
   - `Program::docs()`, like `nickel doc`: documented fields, plus JSON and Markdown renderings
     (Cargo feature `doc`).
+
+- **Phase 4:** other languages.
+  - [`nickel-embed-capi`](nickel-embed-capi): a C library whose header is a superset of Nickel's
+    own `nickel_lang.h`. Programs built for Nickel's C API, go-nickel included, work with it
+    unchanged, and new functions expose programs, field metadata, structured diagnostics,
+    warnings, docs and formatting.
 
 `Context`, `Expr`, `Program` and `Error` are not `Send`: use one per thread.
 

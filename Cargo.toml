@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["nickel-embed"]
+members = ["nickel-embed", "nickel-embed-capi"]
 
 [workspace.package]
 edition = "2024"
