@@ -855,7 +855,9 @@ impl<'a> Iterator for RecordIter<'a> {
         self.inner.as_mut()?.next().map(|(k, v)| {
             (
                 k.label(),
-                v.value.as_ref().map(|rt| Expr { value: rt.clone() }),
+                // Like `value_by_name`: a value read before its record's contracts apply would
+                // escape them.
+                v.value_with_pending_contracts().map(|value| Expr { value }),
             )
         })
     }
@@ -950,10 +952,13 @@ impl Number<'_> {
 
     /// The exact value of this number, as a rational number.
     ///
-    /// Both the numerator and denominator are provided as decimal strings.
+    /// Both the numerator and denominator are provided as decimal strings. The numerator carries
+    /// the sign.
     pub fn as_rational(&self) -> (String, String) {
+        // malachite keeps the sign apart from the numerator, which is a natural number.
+        let sign = if *self.num < 0 { "-" } else { "" };
         (
-            self.num.numerator_ref().to_string(),
+            format!("{sign}{}", self.num.numerator_ref()),
             self.num.denominator_ref().to_string(),
         )
     }
@@ -1100,6 +1105,26 @@ mod tests {
         };
         let mut out = Vec::new();
         err.format(&mut out, ErrorFormat::Text).unwrap();
+    }
+
+    #[test]
+    fn negative_rational() {
+        let expr = Context::new().eval_deep("-2/6").unwrap();
+        let (num, den) = expr.as_number().unwrap().as_rational();
+        assert_eq!((num.as_str(), den.as_str()), ("-1", "3"));
+        let expr = Context::new().eval_deep("-12").unwrap();
+        assert_eq!(expr.as_number().unwrap().as_rational().0, "-12");
+    }
+
+    #[test]
+    fn pending_contracts_through_iteration() {
+        let mut ctxt = Context::new();
+        let expr = ctxt
+            .eval_shallow("{ foo = 1 } | { foo | std.contract.Equal 2 }")
+            .unwrap();
+        for (_, value) in expr.as_record().unwrap().iter() {
+            assert!(ctxt.eval_expr_shallow(value.unwrap()).is_err());
+        }
     }
 
     #[test]
