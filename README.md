@@ -3,8 +3,8 @@
 Embed the [Nickel](https://nickel-lang.org) configuration language in Rust programs.
 
 `nickel-embed` aims to cover Nickel's whole embedding surface with an idiomatic, stable Rust API,
-and to be the native core for Nickel bindings in other languages (a C API and an Erlang/Gleam
-NIF are planned).
+and to be the native core for Nickel bindings in other languages (an Erlang/Gleam NIF is here;
+a C API is planned).
 
 Its core API keeps the names of Nickel's official [`nickel-lang`](https://crates.io/crates/nickel-lang)
 crate, from which it was derived, and runs on the latest `nickel-lang-core` (0.19). Later releases
@@ -60,7 +60,14 @@ let info = program.query()?;                      // nickel query: doc, contract
   - `Program::docs()`, like `nickel doc`: documented fields, plus JSON and Markdown renderings
     (Cargo feature `doc`).
 
-- **Phase 4:** other languages.
+- **Phase 4:** bindings for other languages.
+  - [`nickel-embed-nif`](nickel-embed-nif): an Erlang NIF, the in-process backend of the Gleam
+    package [`nickel`](https://github.com/bahiamovementcenter/gleam-nickel). Each session runs on
+    its own thread, owning one `Program` and the expressions taken from it, and replies to the
+    calling Erlang process with a message, so schedulers are never blocked. Expressions cross into
+    Erlang as resources, which gives lazy, go-nickel-style evaluation; values convert to Gleam
+    terms with exact integers. Build it with `cargo build --release -p nickel-embed-nif` or
+    `nix build .#nickel-embed-nif`; `nickel-embed-nif/test/run.sh` runs its Erlang tests.
   - [`nickel-embed-capi`](nickel-embed-capi): a C library whose header is a superset of Nickel's
     own `nickel_lang.h`. Programs built for Nickel's C API, go-nickel included, work with it
     unchanged, and new functions expose programs, field metadata, structured diagnostics,
