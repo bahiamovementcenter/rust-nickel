@@ -25,11 +25,32 @@ let server: Server = ctx
 
 ## Status
 
-Phase 1 of 5: parity with `nickel-lang` 2.2 (deep, shallow and export evaluation, typed accessors,
-JSON/YAML/TOML output, `serde` decoding, trace output, import paths, error formats), plus
-`Expr::kind()` for matching, `Debug` for expressions, and `Display`/`std::error::Error` for errors.
+Phase 2 of 5.
 
-`Context`, `Expr` and `Error` are not `Send`: use one `Context` per thread.
+- **Phase 1:** parity with `nickel-lang` 2.2 (`Context`, `Expr`, typed accessors, JSON/YAML/TOML
+  output, `serde` decoding, trace output, import paths, error formats), plus `Expr::kind()`,
+  `Debug` and `Display` for expressions, and `std::error::Error` for errors.
+- **Phase 2:** `Program`, the embedded equivalent of the `nickel` command line tool:
+
+```rust
+use nickel_embed::{ExportFormat, Priority, Program, Source};
+
+let mut program = Program::builder()
+    .source(Source::file("server.ncl"))
+    .source(Source::file("overrides.yaml"))       // several inputs are merged
+    .import_paths_from_env()
+    .apply_contract_file("schema.ncl")
+    .override_with_priority("server.port".parse()?, "8080", Priority::Force)
+    .build()?;
+
+let json = program.export(ExportFormat::Json)?;   // nickel export
+let info = program.query()?;                      // nickel query: doc, contracts, subfields
+```
+
+  Inputs can be files, in-memory code or any reader, in Nickel, JSON, YAML, TOML or plain text.
+  Records expose each field's metadata (`Record::field`, `Record::fields`).
+
+`Context`, `Expr`, `Program` and `Error` are not `Send`: use one per thread.
 
 ## Development
 

@@ -6,9 +6,11 @@
 //!
 //! The core API ([`Context`], [`Expr`], [`Record`], [`Array`], [`Number`], [`Error`]) keeps the
 //! names and shapes of Nickel's official `nickel-lang` crate, from which it was derived, so code
-//! moves between the two with few changes. Later releases add what `nickel-lang` lacks: evaluating
-//! files and other input formats, overrides, contracts, queries, typechecking and structured
-//! diagnostics.
+//! moves between the two with few changes.
+//!
+//! [`Program`] adds what the `nickel` command line tool can do and `nickel-lang` can't: evaluating
+//! files and other input formats, merging several inputs, import paths, overrides, contracts,
+//! focusing on a field, exporting, querying field metadata and typechecking.
 //!
 //! ```rust
 //! use nickel_embed::{Context, ExprKind};
@@ -28,6 +30,13 @@
 //! reference-counted. Use one `Context` per thread, and convert results to owned Rust data
 //! (with [`Expr::to_serde`] or [`Error::to_string_with`]) before sending them elsewhere.
 
+mod program;
+
+pub use program::{
+    ExportFormat, FieldInfo, FieldPath, InputFormat, Priority, Program, ProgramBuilder, Source,
+    TypecheckMode,
+};
+
 // Derived from nickel-lang 2.2.0 (https://github.com/tweag/nickel, MIT License,
 // Copyright The Nickel Team), ported to nickel-lang-core 0.19.
 
@@ -41,7 +50,7 @@ use codespan_reporting::term::termcolor::{Ansi, NoColor, WriteColor};
 use malachite::base::{num::conversion::traits::RoundingFrom, rounding_modes::RoundingMode};
 
 use nickel_lang_core::{
-    cache::{CacheHub, InputFormat, SourcePath},
+    cache::{CacheHub, InputFormat as CoreInputFormat, SourcePath},
     deserialize::RustDeserializationError as DeserializationError,
     error::{
         Error as NickelCoreError, IOError, IntoDiagnostics, NullReporter, PointedExportErrorData,
@@ -55,10 +64,10 @@ use nickel_lang_core::{
     files::Files,
     identifier::{Ident, LocIdent},
     position::PosIdx,
-    serialize::{ExportFormat, to_string, validate},
+    serialize::{ExportFormat as CoreExportFormat, to_string, validate},
     term::{
         self, RuntimeContract,
-        record::{Field, RecordData},
+        record::{Field as CoreField, RecordData},
     },
 };
 
@@ -265,7 +274,7 @@ impl Context {
             .import_resolver
             .sources
             .add_source(
-                SourcePath::Path(path, InputFormat::Nickel),
+                SourcePath::Path(path, CoreInputFormat::Nickel),
                 Cursor::new(src),
             )
             .map_err(|err| IOError(err.to_string()))?;
@@ -344,7 +353,7 @@ impl Context {
     /// JSON: if the expression contains any enum variants, this will fail.
     /// This also fails if the expression contains any unevaluated sub-expressions.
     pub fn expr_to_json(&self, expr: &Expr) -> Result<String, Error> {
-        expr.export(ExportFormat::Json)
+        expr.export(CoreExportFormat::Json)
             .map_err(|error| self.wrap_pointed_export_error(error))
     }
 
@@ -354,7 +363,7 @@ impl Context {
     /// YAML: if the expression contains any enum variants, this will fail.
     /// This also fails if the expression contains any unevaluated sub-expressions.
     pub fn expr_to_yaml(&self, expr: &Expr) -> Result<String, Error> {
-        expr.export(ExportFormat::Yaml)
+        expr.export(CoreExportFormat::Yaml)
             .map_err(|error| self.wrap_pointed_export_error(error))
     }
 
@@ -364,7 +373,7 @@ impl Context {
     /// TOML: if the expression contains any enum variants, this will fail.
     /// This also fails if the expression contains any unevaluated sub-expressions.
     pub fn expr_to_toml(&self, expr: &Expr) -> Result<String, Error> {
-        expr.export(ExportFormat::Toml)
+        expr.export(CoreExportFormat::Toml)
             .map_err(|error| self.wrap_pointed_export_error(error))
     }
 
@@ -405,7 +414,7 @@ pub struct Record<'a> {
 
 /// An iterator over names and values in a [`Record`].
 pub struct RecordIter<'a> {
-    inner: Option<indexmap::map::Iter<'a, LocIdent, Field>>,
+    inner: Option<indexmap::map::Iter<'a, LocIdent, CoreField>>,
 }
 
 /// A Nickel array.
@@ -442,7 +451,16 @@ pub struct Number<'a> {
 /// This is a reference internally, and borrows from data owned by an [`Expr`].
 #[derive(Clone)]
 pub struct FieldMetadata<'a> {
-    inner: &'a nickel_lang_core::term::record::FieldMetadata,
+    // `None` means the field has no metadata at all, which reads as all defaults.
+    inner: Option<&'a nickel_lang_core::term::record::FieldMetadata>,
+}
+
+/// A record field: its value, if it has one, and its metadata.
+///
+/// This is a reference internally, and borrows from data owned by an [`Expr`].
+#[derive(Clone)]
+pub struct Field<'a> {
+    field: &'a nickel_lang_core::term::record::Field,
 }
 
 /// A merge priority for a Nickel field.
@@ -493,6 +511,13 @@ impl std::fmt::Debug for Expr {
     }
 }
 
+/// Nickel source, from Nickel's pretty-printer.
+impl std::fmt::Display for Expr {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.value.fmt(f)
+    }
+}
+
 impl std::fmt::Debug for Record<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let mut map = f.debug_map();
@@ -530,7 +555,7 @@ impl std::fmt::Debug for Number<'_> {
 }
 
 impl Expr {
-    fn export(&self, format: ExportFormat) -> Result<String, PointedExportErrorData> {
+    fn export(&self, format: CoreExportFormat) -> Result<String, PointedExportErrorData> {
         validate(format, &self.value)?;
         to_string(format, &self.value)
     }
@@ -694,7 +719,7 @@ impl Expr {
     }
 }
 
-impl Record<'_> {
+impl<'a> Record<'a> {
     /// Returns the number of key/value pairs in this record.
     pub fn len(&self) -> usize {
         self.data.len()
@@ -751,6 +776,37 @@ impl Record<'_> {
     /// Returns an iterator over the field names and values of this record.
     pub fn iter(&self) -> RecordIter<'_> {
         self.clone().into_iter()
+    }
+
+    /// Looks up a field by name, with its metadata.
+    pub fn field(&self, key: &str) -> Option<Field<'a>> {
+        self.data
+            .into_opt()?
+            .fields
+            .get(&LocIdent::from(Ident::new(key)))
+            .map(|field| Field { field })
+    }
+
+    /// Does this record have a field with this name?
+    pub fn contains_key(&self, key: &str) -> bool {
+        self.field(key).is_some()
+    }
+
+    /// Returns an iterator over the field names, in source order.
+    pub fn keys(&self) -> impl Iterator<Item = &'a str> + use<'a> {
+        self.data
+            .into_opt()
+            .into_iter()
+            .flat_map(|data| data.fields.keys().map(|k| k.label()))
+    }
+
+    /// Returns an iterator over the field names and fields, with their metadata.
+    pub fn fields(&self) -> impl Iterator<Item = (&'a str, Field<'a>)> + use<'a> {
+        self.data.into_opt().into_iter().flat_map(|data| {
+            data.fields
+                .iter()
+                .map(|(k, field)| (k.label(), Field { field }))
+        })
     }
 }
 
@@ -876,20 +932,62 @@ impl Number<'_> {
     }
 }
 
+impl<'a> Field<'a> {
+    /// The field's value, if it has one.
+    ///
+    /// Like [`Record::value_by_name`], the value may still be unevaluated, and
+    /// carries any contracts the record has yet to apply to it.
+    pub fn value(&self) -> Option<Expr> {
+        self.field
+            .value_with_pending_contracts()
+            .map(|value| Expr { value })
+    }
+
+    /// The field's metadata: documentation, annotations, optionality, priority.
+    pub fn metadata(&self) -> FieldMetadata<'a> {
+        FieldMetadata {
+            inner: self.field.metadata.0.as_deref(),
+        }
+    }
+}
+
 impl FieldMetadata<'_> {
     /// The documentation attached to the field (if any).
     pub fn doc(&self) -> Option<&str> {
-        self.inner.doc.as_deref()
+        self.inner?.doc.as_deref()
     }
 
     /// Is this field optional?
     pub fn optional(&self) -> bool {
-        self.inner.opt
+        self.inner.is_some_and(|m| m.opt)
     }
 
     /// Is this field marked as `not_exported`?
     pub fn not_exported(&self) -> bool {
-        self.inner.not_exported
+        self.inner.is_some_and(|m| m.not_exported)
+    }
+
+    /// The field's type annotation (`field : Type`), rendered as Nickel source.
+    pub fn type_annotation(&self) -> Option<String> {
+        self.inner?
+            .annotation
+            .typ
+            .as_ref()
+            .map(|t| t.typ.to_string())
+    }
+
+    /// The field's contract annotations (`field | Contract`), rendered as Nickel source,
+    /// in the order they were written.
+    pub fn contracts(&self) -> Vec<String> {
+        self.inner
+            .map(|m| {
+                m.annotation
+                    .contracts
+                    .iter()
+                    .map(|c| c.typ.to_string())
+                    .collect()
+            })
+            .unwrap_or_default()
     }
 
     /// Returns the merge priority of the field, if one was set.
@@ -897,7 +995,7 @@ impl FieldMetadata<'_> {
     /// If no merge priority was set, returns `None`. (An unset
     /// priority has the same behavior as a numeric priority of zero.)
     pub fn merge_priority(&self) -> Option<MergePriority<'_>> {
-        match &self.inner.priority {
+        match &self.inner?.priority {
             term::MergePriority::Bottom => Some(MergePriority::Default),
             term::MergePriority::Neutral => None,
             term::MergePriority::Numeral(num) => Some(MergePriority::Priority(Number { num })),
