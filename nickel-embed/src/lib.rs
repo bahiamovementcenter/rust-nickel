@@ -12,6 +12,9 @@
 //! files and other input formats, merging several inputs, import paths, overrides, contracts,
 //! focusing on a field, exporting, querying field metadata and typechecking.
 //!
+//! [`PackageMap`] resolves package imports (`import foo`), from directories you provide or, with
+//! the `packages` feature, from a `Nickel-pkg.ncl` manifest.
+//!
 //! ```rust
 //! use nickel_embed::{Context, ExprKind};
 //!
@@ -33,11 +36,13 @@
 mod diagnostic;
 #[cfg(feature = "format")]
 mod format;
+mod package;
 mod program;
 
 pub use diagnostic::{Diagnostic, ErrorKind, Label, Location, Severity};
 #[cfg(feature = "format")]
 pub use format::{FormatError, format};
+pub use package::PackageMap;
 #[cfg(feature = "doc")]
 pub use program::Documentation;
 pub use program::{
@@ -143,6 +148,8 @@ pub enum Color {
 pub struct Error {
     error: Box<nickel_lang_core::error::Error>,
     files: nickel_lang_core::files::Files,
+    /// Set when the kind isn't derived from the core error, as for package errors.
+    kind: Option<ErrorKind>,
 }
 
 impl std::fmt::Debug for Error {
@@ -187,7 +194,7 @@ impl Error {
 impl Error {
     /// What kind of failure this is.
     pub fn kind(&self) -> ErrorKind {
-        ErrorKind::of(&self.error)
+        self.kind.unwrap_or_else(|| ErrorKind::of(&self.error))
     }
 
     /// The error's messages and the source locations they point at, as data.
@@ -223,6 +230,7 @@ impl From<std::io::Error> for Error {
         Error {
             error: Box::new(nickel_lang_core::error::Error::IOError(e.into())),
             files: Files::empty(),
+            kind: None,
         }
     }
 }
@@ -232,6 +240,7 @@ impl From<nickel_lang_core::error::ExportErrorData> for Error {
         Error {
             error: Box::new(e.into()),
             files: Files::empty(),
+            kind: None,
         }
     }
 }
@@ -258,6 +267,15 @@ impl Context {
             .import_resolver
             .sources
             .add_import_paths(import_paths.into_iter());
+        self
+    }
+
+    /// Resolves package imports (`import foo`) with this map. Without one, they fail.
+    pub fn with_package_map(mut self, map: PackageMap) -> Self {
+        self.vm_ctxt
+            .import_resolver
+            .sources
+            .set_package_map(map.into_core());
         self
     }
 
@@ -410,6 +428,7 @@ impl Context {
         Error {
             error: Box::new(error),
             files: self.vm_ctxt.import_resolver.sources.files().clone(),
+            kind: None,
         }
     }
 

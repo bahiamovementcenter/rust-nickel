@@ -25,7 +25,7 @@ let server: Server = ctx
 
 ## Status
 
-Phase 4 of 5.
+All five phases are done.
 
 - **Phase 1:** parity with `nickel-lang` 2.2 (`Context`, `Expr`, typed accessors, JSON/YAML/TOML
   output, `serde` decoding, trace output, import paths, error formats), plus `Expr::kind()`,
@@ -72,6 +72,28 @@ let info = program.query()?;                      // nickel query: doc, contract
     own `nickel_lang.h`. Programs built for Nickel's C API, go-nickel included, work with it
     unchanged, and new functions expose programs, field metadata, structured diagnostics,
     warnings, docs and formatting.
+
+- **Phase 5:** package imports (`import foo`).
+  - `PackageMap` maps package names to directories, for the program and for each package's own
+    dependencies. Pass it to `ProgramBuilder::package_map` or `Context::with_package_map`. This
+    needs no extra dependencies, so packages fetched by other means (Nix, vendoring) work as is.
+  - With the Cargo feature `packages` (off by default: it pulls in `gix`),
+    `PackageMap::from_manifest` reads a `Nickel-pkg.ncl` manifest like `nickel` does: it resolves
+    versions, fetches git and index dependencies into the cache and writes `Nickel-pkg.lock`.
+    `PackageMap::find_manifest` finds the nearest manifest. Failures have `ErrorKind::Package`.
+    Nickel's package manager is still experimental (`package-experimental` in the `nickel`
+    command), so manifest and lock formats may change; it also prints a few status lines to
+    standard error that can't be turned off.
+
+```rust
+use nickel_embed::{PackageMap, Program, Source};
+
+let manifest = PackageMap::find_manifest(".").ok_or("no Nickel-pkg.ncl")?;
+let mut program = Program::builder()
+    .source(Source::file("main.ncl"))
+    .package_map(PackageMap::from_manifest(manifest)?)
+    .build()?;
+```
 
 `Context`, `Expr`, `Program` and `Error` are not `Send`: use one per thread.
 

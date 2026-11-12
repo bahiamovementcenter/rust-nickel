@@ -32,6 +32,9 @@ pub enum ErrorKind {
     Export,
     /// Reading a source failed.
     Io,
+    /// Package resolution failed: the manifest is invalid, a dependency can't be found or
+    /// fetched, or versions conflict.
+    Package,
     /// A failure with no more specific kind.
     Other,
 }

@@ -13,6 +13,9 @@ repository.workspace = true
 format = ["nickel-lang-core/format"]
 # Documentation extraction, as JSON or Markdown.
 doc = ["nickel-lang-core/doc"]
+# Package manifests (`Nickel-pkg.ncl`): version resolution and fetching with gix. Without it,
+# `PackageMap` still works with directories you provide.
+packages = ["dep:nickel-lang-package"]
 
 [package.metadata.docs.rs]
 all-features = true
@@ -22,6 +25,8 @@ all-features = true
 # exactly and bumped deliberately.
 nickel-lang-core = { version = "=0.19.0", default-features = false }
 nickel-lang-vector = "0.2"
+# Released in lockstep with nickel-lang-core, so pinned to the matching version.
+nickel-lang-package = { version = "=0.8.0", optional = true }
 codespan-reporting = { version = "0.13", features = ["serialization"] }
 indexmap = "2.8"
 malachite = "0.9"
