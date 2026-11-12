@@ -14,6 +14,8 @@
 //! - field metadata on records and from queries (`nickel_field_metadata_*`);
 //! - structured errors: an error kind, and diagnostics with severities, notes and labelled
 //!   source locations (`nickel_error_get_kind`, `nickel_diagnostic_*`, `nickel_label_*`);
+//! - package imports (`import foo`) through a package map, filled by hand or from a
+//!   `Nickel-pkg.ncl` manifest (`nickel_package_map_*`);
 //! - warnings through a callback, import paths on a context, the formatter, documentation
 //!   extraction and the library version.
 //!
@@ -23,8 +25,8 @@
 //! # Ownership and lifetimes
 //!
 //! All the owning types (`nickel_context`, `nickel_expr`, `nickel_error`, `nickel_string`, and
-//! the new `nickel_program_builder`, `nickel_program`, `nickel_field_info` and
-//! `nickel_field_metadata`) are only made available to C via opaque pointers, created by a
+//! the new `nickel_program_builder`, `nickel_program`, `nickel_package_map`, `nickel_field_info`
+//! and `nickel_field_metadata`) are only made available to C via opaque pointers, created by a
 //! `nickel_*_alloc` function and destroyed by the matching `nickel_*_free`. Functions that
 //! produce one of these write into an object the caller allocated.
 //!
@@ -49,10 +51,12 @@
 #![deny(missing_docs)]
 
 mod diagnostics;
+mod packages;
 mod program;
 mod tooling;
 
 pub use diagnostics::*;
+pub use packages::*;
 pub use program::*;
 pub use tooling::*;
 

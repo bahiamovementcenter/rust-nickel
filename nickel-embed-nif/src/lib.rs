@@ -35,7 +35,7 @@ use std::{
 
 use nickel_embed::{
     Diagnostic, Error as NickelError, ErrorFormat, ErrorKind, ExportFormat, Expr, ExprKind,
-    FieldPath, MergePriority, Number, Priority, Program, Source, TypecheckMode,
+    FieldPath, MergePriority, Number, PackageMap, Priority, Program, Source, TypecheckMode,
 };
 use rustler::{
     Atom, BigInt, Encoder, Env, LocalPid, NifResult, NifTaggedEnum, OwnedEnv, Resource,
@@ -55,6 +55,7 @@ mod atoms {
         nickel_failure, native_failure,
         // Gleam `nickel/error` types
         parse_error, type_error, contract_violation, import_error, serialization_error,
+        package_error,
         diagnostic, label, primary, secondary,
         bug_severity, error_severity, warning_severity, note_severity, help_severity,
         // Gleam `nickel/metadata` types
@@ -121,6 +122,13 @@ enum Override {
     Force(Vec<String>, String),
 }
 
+/// A Gleam `Option(String)`.
+#[derive(NifTaggedEnum)]
+enum OptionalPath {
+    None,
+    Some(String),
+}
+
 /// Everything needed to build a program, as Gleam's `native.Options`.
 #[derive(rustler::NifRecord)]
 #[tag = "options"]
@@ -135,6 +143,12 @@ struct Options {
     field: Vec<String>,
     /// Collect `std.trace` output for `take_trace`.
     trace: bool,
+    /// A package manifest (`Nickel-pkg.ncl`) whose dependencies package imports resolve to,
+    /// like `--manifest-path`. Resolving it may fetch packages and write the lock file.
+    manifest: OptionalPath,
+    /// Where fetched packages are cached, like `--package-cache-dir`; by default the
+    /// platform's cache directory.
+    package_cache_dir: OptionalPath,
 }
 
 #[derive(NifTaggedEnum, Clone, Copy)]
@@ -195,7 +209,8 @@ enum Request {
 
 enum Message {
     Request {
-        request: Request,
+        // Boxed: build options make requests much larger than the other messages.
+        request: Box<Request>,
         reply_to: LocalPid,
         env: OwnedEnv,
         reference: SavedTerm,
@@ -247,7 +262,7 @@ fn request<'a>(
     session
         .tx
         .send(Message::Request {
-            request: req,
+            request: Box::new(req),
             reply_to,
             env: owned,
             reference,
@@ -337,7 +352,7 @@ impl Worker {
                     mut env,
                     reference,
                 } => {
-                    let reply = catch_unwind(AssertUnwindSafe(|| self.handle(request)))
+                    let reply = catch_unwind(AssertUnwindSafe(|| self.handle(*request)))
                         .unwrap_or_else(|panic| {
                             let what = panic
                                 .downcast_ref::<String>()
@@ -492,6 +507,13 @@ impl Worker {
         }
         if options.trace {
             builder = builder.trace(self.trace.clone());
+        }
+        if let OptionalPath::Some(manifest) = options.manifest {
+            let map = match options.package_cache_dir {
+                OptionalPath::Some(cache) => PackageMap::from_manifest_with_cache(manifest, cache)?,
+                OptionalPath::None => PackageMap::from_manifest(manifest)?,
+            };
+            builder = builder.package_map(map);
         }
         builder.build()
     }
@@ -769,6 +791,7 @@ fn nickel_failure<'a>(env: Env<'a>, e: &NickelError) -> Term<'a> {
         ErrorKind::Contract => Some(atoms::contract_violation()),
         ErrorKind::Import => Some(atoms::import_error()),
         ErrorKind::Export => Some(atoms::serialization_error()),
+        ErrorKind::Package => Some(atoms::package_error()),
         _ => None,
     };
     let diagnostics: Vec<Term<'a>> = e

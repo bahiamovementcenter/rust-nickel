@@ -18,6 +18,7 @@ eight of go-nickel's tests pass that way.
 | Evaluate (deep, for export, shallow, record spine), export to JSON/YAML/YAML documents/TOML/text, query, typecheck (walk or enforce), parse | `nickel_program_*` |
 | Field metadata: documentation, type annotation, contracts, merge priority, optional, not_exported | `nickel_program_query`, `nickel_field_info_*`, `nickel_record_field_metadata_by_*`, `nickel_field_metadata_*` |
 | Error kinds and structured diagnostics: severity, message, code, notes, labels with source name, byte range, line and column | `nickel_error_get_kind`, `nickel_error_diagnostic*`, `nickel_diagnostic_*`, `nickel_label_*` |
+| Package imports (`import foo`): package maps built from directories or from a `Nickel-pkg.ncl` manifest (resolving and fetching dependencies, writing the lock file), on a context or a program | `nickel_package_map_*`, `nickel_context_set_package_map`, `nickel_program_builder_set_package_map` |
 | Warnings through a callback | `nickel_context_set_warning_callback`, `nickel_program_builder_set_warning_callback` |
 | Import paths on a context | `nickel_context_add_import_path` |
 | `nickel doc` and `nickel format` | `nickel_program_docs`, `nickel_format` |
@@ -39,9 +40,11 @@ cargo build --release -p nickel-embed-capi                    # target/release/l
 cargo build --release -p nickel-embed-capi --features format  # with nickel_format
 ```
 
-Cargo features: `doc` (on by default) and `format` (off: it pulls in Topiary and tree-sitter).
-Without them `nickel_program_docs` and `nickel_format` still exist and return an error, so the
-header is the same for every build.
+Cargo features: `doc` and `packages` (on by default; `packages` pulls in gix to fetch git
+dependencies) and `format` (off: it pulls in Topiary and tree-sitter). Without them
+`nickel_program_docs`, `nickel_package_map_load_manifest` and `nickel_format` still exist and
+return an error, so the header is the same for every build. Package maps built by hand work in
+every build.
 
 Linking the static library needs the system libraries Rust's standard library uses (on Linux,
 `-lm -lpthread -ldl`; `cargo rustc -p nickel-embed-capi --release --crate-type staticlib -- --print native-static-libs`

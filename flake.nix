@@ -87,6 +87,9 @@
                 ./Cargo.lock
                 ./README.md
                 ./nickel-embed
+                # Not built here, but a workspace member, so Cargo reads its manifest.
+                ./nickel-embed-capi/Cargo.toml
+                ./nickel-embed-capi/src
                 ./nickel-embed-nif
               ];
             };

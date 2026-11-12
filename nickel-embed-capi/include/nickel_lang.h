@@ -86,6 +86,10 @@ typedef enum {
      * A failure with no more specific kind.
      */
     NICKEL_ERROR_KIND_OTHER = 8,
+    /**
+     * A package manifest couldn't be read or its dependencies resolved or fetched.
+     */
+    NICKEL_ERROR_KIND_PACKAGE = 9,
 } nickel_error_kind;
 
 /**
@@ -287,6 +291,21 @@ typedef struct nickel_label nickel_label;
  * See [`nickel_expr_is_number`] and [`nickel_expr_as_number`].
  */
 typedef struct nickel_number nickel_number;
+
+/**
+ * Where package imports (`import foo`) are found: a map from package names to directories.
+ *
+ * Each package is a directory, and importing it evaluates its `main.ncl`. Names are local to
+ * the importer: the program's own packages are added with [`nickel_package_map_add_package`],
+ * and those of a package with [`nickel_package_map_add_dependency`], so two packages can each
+ * have their own `foo`. [`nickel_package_map_load_manifest`] instead fills the map from a
+ * `Nickel-pkg.ncl` manifest, the way the `nickel` command does.
+ *
+ * Use a map with [`nickel_context_set_package_map`] or
+ * [`nickel_program_builder_set_package_map`], which copy it. Allocate one with
+ * [`nickel_package_map_alloc`] and free it with [`nickel_package_map_free`].
+ */
+typedef struct nickel_package_map nickel_package_map;
 
 /**
  * A Nickel program built from one or more sources, ready to evaluate, export, query or
@@ -952,6 +971,110 @@ void nickel_label_position(const nickel_label *l,
                            uintptr_t *out_start_column,
                            uintptr_t *out_end_line,
                            uintptr_t *out_end_column);
+
+/**
+ * Allocate a new, empty [`nickel_package_map`]: every package import fails until packages are
+ * added. Free it with [`nickel_package_map_free`].
+ */
+nickel_package_map *nickel_package_map_alloc(void);
+
+/**
+ * Free a [`nickel_package_map`].
+ */
+void nickel_package_map_free(nickel_package_map *m);
+
+/**
+ * Make `import name` in the program's own sources load the package in the directory `dir`,
+ * replacing any package of that name.
+ *
+ * `name` and `dir` are null-terminated, UTF-8 strings, copied. A relative `dir` is taken from
+ * the current directory. Fails only if a string isn't UTF-8; a missing directory is reported
+ * when the package is imported.
+ */
+nickel_result nickel_package_map_add_package(nickel_package_map *m,
+                                             const char *name,
+                                             const char *dir,
+                                             nickel_error *out_error);
+
+/**
+ * Make `import name` inside the package in the directory `parent` load the package in `dir`.
+ *
+ * `parent` must be the directory the parent package was added with (by
+ * [`nickel_package_map_add_package`] or as another package's dependency). Strings are as in
+ * [`nickel_package_map_add_package`]. Fails only if a string isn't UTF-8.
+ */
+nickel_result nickel_package_map_add_dependency(nickel_package_map *m,
+                                                const char *parent,
+                                                const char *name,
+                                                const char *dir,
+                                                nickel_error *out_error);
+
+/**
+ * Replace the contents of the map with the packages of a manifest (`Nickel-pkg.ncl`), like the
+ * `nickel` command does before evaluating a package.
+ *
+ * This resolves versions, fetches git and index dependencies that aren't cached yet, and
+ * writes or updates `Nickel-pkg.lock` next to the manifest. Fetched packages are cached in
+ * `cache_dir` if it isn't NULL (like `--package-cache-dir`), and otherwise in the platform's
+ * cache directory, such as `~/.cache/nickel`. Nickel's package manager is experimental: its
+ * manifest and lock formats may change.
+ *
+ * - `manifest` is the null-terminated, UTF-8 path of the manifest; see
+ *   [`nickel_package_map_find_manifest`].
+ * - On failure, the map is unchanged and the error, of kind `NICKEL_ERROR_KIND_PACKAGE`, is
+ *   stored in `out_error` (if not NULL). Errors in the manifest's own code have diagnostics
+ *   pointing into it.
+ *
+ * Libraries built without the `packages` Cargo feature (on by default) always fail.
+ */
+nickel_result nickel_package_map_load_manifest(nickel_package_map *m,
+                                               const char *manifest,
+                                               const char *cache_dir,
+                                               nickel_error *out_error);
+
+/**
+ * Find the manifest for the directory `dir`: the nearest `Nickel-pkg.ncl` in it or a parent
+ * directory, as the `nickel` command looks for one.
+ *
+ * Returns 1 and writes the manifest's path to `out_path` (if not NULL, allocated with
+ * [`nickel_string_alloc`]) if there is one, and returns 0 otherwise, or if `dir` isn't UTF-8.
+ */
+int nickel_package_map_find_manifest(const char *dir, nickel_string *out_path);
+
+/**
+ * The number of the program's own packages (those added with
+ * [`nickel_package_map_add_package`], or a manifest's direct dependencies).
+ */
+uintptr_t nickel_package_map_package_count(const nickel_package_map *m);
+
+/**
+ * Write the name and directory of the program's package number `index`, in name order, to
+ * `out_name` and `out_dir` (each NULL or allocated with [`nickel_string_alloc`]). Returns 1,
+ * or 0 if `index` is out of range.
+ */
+int nickel_package_map_package(const nickel_package_map *m,
+                               uintptr_t index,
+                               nickel_string *out_name,
+                               nickel_string *out_dir);
+
+/**
+ * Write a description of the whole map, with every package's dependencies, to `out_string`
+ * (allocated with [`nickel_string_alloc`]), as `nickel package debug-resolution` prints it.
+ */
+void nickel_package_map_to_string(const nickel_package_map *m, nickel_string *out_string);
+
+/**
+ * Resolve package imports in this context with a copy of `map`, replacing any map set before.
+ * Without one, package imports fail.
+ */
+void nickel_context_set_package_map(nickel_context *ctx, const nickel_package_map *map);
+
+/**
+ * Resolve the program's package imports with a copy of `map`, replacing any map set before.
+ * Without one, package imports fail.
+ */
+void nickel_program_builder_set_package_map(nickel_program_builder *b,
+                                            const nickel_package_map *map);
 
 /**
  * Allocate a new, empty [`nickel_program_builder`]. Free it with

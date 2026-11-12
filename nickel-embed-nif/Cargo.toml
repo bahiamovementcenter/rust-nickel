@@ -15,5 +15,5 @@ test = false
 doctest = false
 
 [dependencies]
-nickel-embed = { path = "../nickel-embed" }
+nickel-embed = { path = "../nickel-embed", features = ["packages"] }
 rustler = { version = "0.39", default-features = false, features = ["big_integer", "derive", "nif_version_2_16"] }
