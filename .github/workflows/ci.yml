@@ -56,4 +56,5 @@ jobs:
     steps:
       - uses: actions/checkout@v5
       - uses: DeterminateSystems/determinate-nix-action@v3
-      - run: nix flake check --no-build
+      # Builds the packaged NIF and runs its Erlang tests, as gleam-nickel's Nix checks do.
+      - run: nix flake check -L
