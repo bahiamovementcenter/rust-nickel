@@ -25,12 +25,12 @@ unsafe fn string(s: *const nickel_string) -> String {
     let mut len = 0;
     unsafe {
         nickel_string_data(s, &mut data, &mut len);
-        String::from_utf8(std::slice::from_raw_parts(data as *const u8, len).to_vec()).unwrap()
+        String::from_utf8(std::slice::from_raw_parts(data.cast::<u8>(), len).to_vec()).unwrap()
     }
 }
 
 unsafe fn borrowed(data: *const c_char, len: usize) -> String {
-    unsafe { String::from_utf8(std::slice::from_raw_parts(data as *const u8, len).to_vec()) }
+    unsafe { String::from_utf8(std::slice::from_raw_parts(data.cast::<u8>(), len).to_vec()) }
         .unwrap()
 }
 
