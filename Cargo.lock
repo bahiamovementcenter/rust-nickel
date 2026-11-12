@@ -1219,6 +1219,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "nickel-embed-capi"
+version = "0.1.0"
+dependencies = [
+ "nickel-embed",
+]
+
+[[package]]
 name = "nickel-embed-nif"
 version = "0.1.0"
 dependencies = [
