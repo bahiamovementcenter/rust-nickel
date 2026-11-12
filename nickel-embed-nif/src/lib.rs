@@ -146,6 +146,9 @@ struct Options {
     /// A package manifest (`Nickel-pkg.ncl`) whose dependencies package imports resolve to,
     /// like `--manifest-path`. Resolving it may fetch packages and write the lock file.
     manifest: OptionalPath,
+    /// Where fetched packages are cached, like `--package-cache-dir`; by default the
+    /// platform's cache directory.
+    package_cache_dir: OptionalPath,
 }
 
 #[derive(NifTaggedEnum, Clone, Copy)]
@@ -206,7 +209,8 @@ enum Request {
 
 enum Message {
     Request {
-        request: Request,
+        // Boxed: build options make requests much larger than the other messages.
+        request: Box<Request>,
         reply_to: LocalPid,
         env: OwnedEnv,
         reference: SavedTerm,
@@ -258,7 +262,7 @@ fn request<'a>(
     session
         .tx
         .send(Message::Request {
-            request: req,
+            request: Box::new(req),
             reply_to,
             env: owned,
             reference,
@@ -348,7 +352,7 @@ impl Worker {
                     mut env,
                     reference,
                 } => {
-                    let reply = catch_unwind(AssertUnwindSafe(|| self.handle(request)))
+                    let reply = catch_unwind(AssertUnwindSafe(|| self.handle(*request)))
                         .unwrap_or_else(|panic| {
                             let what = panic
                                 .downcast_ref::<String>()
@@ -505,7 +509,11 @@ impl Worker {
             builder = builder.trace(self.trace.clone());
         }
         if let OptionalPath::Some(manifest) = options.manifest {
-            builder = builder.package_map(PackageMap::from_manifest(manifest)?);
+            let map = match options.package_cache_dir {
+                OptionalPath::Some(cache) => PackageMap::from_manifest_with_cache(manifest, cache)?,
+                OptionalPath::None => PackageMap::from_manifest(manifest)?,
+            };
+            builder = builder.package_map(map);
         }
         builder.build()
     }
