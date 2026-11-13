@@ -1,7 +1,0 @@
-These files are copies of xD's Nickel primitives. Don't edit them here: change
-them in xD and copy them again with scripts/sync-xd.sh.
-
-Repository: https://github.com/bahiamovementcenter/xD
-Commit:     5750f22d13389a89c6ef3716a26dcfbc7881c53e (head of xD pull request 7)
-Files:      nickel/xd.ncl, nickel/jd.ncl, nickel/work-packages.ncl,
-            nickel/tests/primitives.ncl

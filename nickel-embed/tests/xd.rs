@@ -1,11 +1,55 @@
-//! The bundled xD primitives (feature `xd`): xD's own examples run unchanged, and the typed
-//! wrappers agree with them.
+//! xD's package (feature `xd`): fetched at the pinned commit into a temporary cache, then
+//! the typed wrappers checked against it.
+//!
+//! The package is fetched from GitHub. To fetch it from a local clone of xD instead (offline,
+//! or behind a proxy gix can't use), set `NICKEL_EMBED_XD_REPO` to its path or URL; it must
+//! contain the pinned commit.
 #![cfg(feature = "xd")]
 
+use std::sync::OnceLock;
+
 use nickel_embed::{
-    Context,
-    xd::{Entry, Error, Pattern},
+    Context, ErrorKind, PackageCache, Packages,
+    xd::{self, Entry, Error, Pattern},
 };
+
+/// One fetch for the whole test binary, into a cache that lives as long as it does.
+fn cache() -> &'static PackageCache {
+    static CACHE: OnceLock<(tempfile::TempDir, PackageCache)> = OnceLock::new();
+    &CACHE
+        .get_or_init(|| {
+            let dir = tempfile::tempdir().unwrap();
+            let mut cache = PackageCache::at(dir.path()).unwrap();
+            if let Ok(repo) = std::env::var("NICKEL_EMBED_XD_REPO") {
+                let repo = if repo.contains("://") {
+                    repo
+                } else {
+                    format!("file://{}", std::fs::canonicalize(repo).unwrap().display())
+                };
+                cache = cache.replace_git(xd::GIT_URL, &repo).unwrap();
+            }
+            // Fetch once up front, so the tests below only read the cache.
+            xd::package(&cache).unwrap();
+            (dir, cache)
+        })
+        .1
+}
+
+fn packages() -> Packages {
+    xd::package(cache()).unwrap()
+}
+
+fn context() -> Context {
+    Context::new().with_packages(packages())
+}
+
+fn pattern(code: &str) -> Pattern {
+    Pattern::with_context(context(), code)
+}
+
+fn jd() -> Pattern {
+    pattern("xd.units.jd.pattern")
+}
 
 fn entry(address: &[u64], link: Option<&[u64]>, label: Option<&str>) -> Entry {
     Entry {
@@ -15,27 +59,57 @@ fn entry(address: &[u64], link: Option<&[u64]>, label: Option<&str>) -> Entry {
     }
 }
 
-/// xD's `nickel/tests/primitives.ncl`, copied with the library, passes as it does in xD.
 #[test]
-fn xds_examples_pass() {
-    let mut ctx = Context::new().with_xd();
-    let result = ctx.eval_deep(include_str!("../xd/tests/primitives.ncl"));
-    assert!(result.is_ok(), "{}", result.err().unwrap());
-}
-
-#[test]
-fn bundled_files_import_without_a_context_of_their_own() {
-    let mut ctx = Context::new().with_xd();
+fn the_package_is_imported_by_name() {
+    let mut ctx = context();
     let expr = ctx
-        .eval_deep(r#"(import "jd.ncl").scheme.levels |> std.array.map (fun l => l.name)"#)
+        .eval_deep("(import xd).units.jd.scheme.levels |> std.array.map (fun l => l.name)")
         .unwrap();
     let names: Vec<String> = expr.to_serde().unwrap();
     assert_eq!(names, ["area", "category", "id"]);
 }
 
 #[test]
+fn the_cached_package_is_the_pinned_commit() {
+    let (name, dir) = packages()
+        .top_level()
+        .map(|(n, d)| (n.to_owned(), d.to_owned()))
+        .next()
+        .unwrap();
+    assert_eq!(name, "xd");
+    assert!(
+        dir.ends_with(std::path::Path::new(xd::TREE).join(xd::PATH)),
+        "{dir:?}"
+    );
+    let manifest = std::fs::read_to_string(dir.join("Nickel-pkg.ncl")).unwrap();
+    assert!(
+        manifest.contains(&format!("version = \"{}\"", xd::VERSION)),
+        "{manifest}"
+    );
+}
+
+#[test]
+fn programs_import_it_too() {
+    let mut program = nickel_embed::Program::builder()
+        .source(nickel_embed::Source::code(
+            r#"{ id = (import xd).units.jd.pattern.render [1, 1, 11] }"#,
+        ))
+        .packages(packages())
+        .build()
+        .unwrap();
+    let json = program.export(nickel_embed::ExportFormat::Json).unwrap();
+    assert!(json.contains(r#""id": "11.11""#), "{json}");
+}
+
+#[test]
+fn without_the_package_the_import_fails() {
+    let err = Context::new().eval_deep("import xd").unwrap_err();
+    assert_eq!(err.kind(), ErrorKind::Import);
+}
+
+#[test]
 fn jd_renders_and_parses() {
-    let mut jd = Pattern::jd();
+    let mut jd = jd();
     assert_eq!(jd.render(&[1]).unwrap(), "10-19");
     assert_eq!(jd.render(&[1, 1]).unwrap(), "11");
     assert_eq!(jd.render(&[1, 1, 11]).unwrap(), "11.11");
@@ -57,7 +131,7 @@ fn jd_renders_and_parses() {
 
 #[test]
 fn write_inverts_parse() {
-    let mut jd = Pattern::jd();
+    let mut jd = jd();
     for name in ["11.11 Passport", "10-19 Life admin", "11", "99.99"] {
         let parsed = jd.parse(name).unwrap().unwrap();
         assert_eq!(jd.write(&parsed).unwrap(), name);
@@ -66,7 +140,7 @@ fn write_inverts_parse() {
 
 #[test]
 fn labels_are_passed_through_exactly() {
-    let mut jd = Pattern::jd();
+    let mut jd = jd();
     for label in [
         r#"quotes " and \ backslash"#,
         "%{not interpolated}",
@@ -84,15 +158,14 @@ fn labels_are_passed_through_exactly() {
 
 #[test]
 fn work_packages_stand_alone_and_stack() {
-    let mut alone = Pattern::work_packages();
+    let mut alone = pattern("xd.units.work_packages.work_packages");
     assert_eq!(
         alone.parse("W0012 Taxes").unwrap(),
         Some(entry(&[12], None, Some("Taxes")))
     );
     assert_eq!(alone.parse("W0012~11.13").unwrap(), None);
 
-    let mut on_jd =
-        Pattern::new(r#"((import "jd.ncl") & (import "work-packages.ncl")).work_packages"#);
+    let mut on_jd = pattern("(xd.units.jd & xd.units.work_packages).work_packages");
     let linked = entry(&[12], Some(&[1, 1, 13]), Some("2026 tax return"));
     assert_eq!(
         on_jd.parse("W0012~11.13 2026 tax return").unwrap(),
@@ -103,7 +176,7 @@ fn work_packages_stand_alone_and_stack() {
 
 #[test]
 fn custom_patterns_see_the_primitives() {
-    let mut boards = Pattern::new(
+    let mut boards = pattern(
         r#"xd.pattern [
              xd.slot { name = "category", width = 2 },
              xd.sep.within,
@@ -131,7 +204,7 @@ fn the_scheme_deserializes() {
         base: u32,
         levels: Vec<Level>,
     }
-    let scheme: Scheme = Pattern::jd().scheme().unwrap();
+    let scheme: Scheme = jd().scheme().unwrap();
     assert_eq!(scheme.base, 10);
     let levels: Vec<_> = scheme
         .levels
@@ -150,18 +223,17 @@ fn the_scheme_deserializes() {
 
 #[test]
 fn mistakes_are_nickel_errors() {
-    let mut jd = Pattern::jd();
+    let mut jd = jd();
     assert!(matches!(jd.render(&[1, 1, 100]), Err(Error::Nickel(_))));
     assert!(matches!(jd.render(&[]), Err(Error::Nickel(_))));
 
-    let mut bad = Pattern::new(r#"xd.pattern [xd.sep.within]"#);
+    let mut bad = pattern("xd.pattern [xd.sep.within]");
     match bad.render(&[1]) {
         Err(Error::Nickel(e)) => assert!(e.to_string().contains("at least one slot"), "{e}"),
         other => panic!("expected a Nickel error, got {:?}", other.map(|_| ())),
     }
 
-    let mut wp =
-        Pattern::new(r#"((import "jd.ncl") & (import "work-packages.ncl")).work_packages"#);
+    let mut wp = pattern("(xd.units.jd & xd.units.work_packages).work_packages");
     assert!(matches!(
         wp.scheme::<serde_json::Value>(),
         Err(Error::Nickel(_))

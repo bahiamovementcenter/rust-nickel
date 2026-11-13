@@ -1,5 +1,5 @@
-//! xD's primitives, bundled: patterns for numbering systems such as Johnny.Decimal, written in
-//! Nickel, with typed Rust wrappers for rendering and parsing numbers.
+//! xD's primitives as a pinned Nickel package: patterns for numbering systems such as
+//! Johnny.Decimal, with typed Rust wrappers for rendering and parsing numbers.
 //!
 //! [xD](https://github.com/bahiamovementcenter/xD) describes a numbering system as a *pattern*:
 //! an array of slots (fixed-width digits from an alphabet), separators, literals, an optional
@@ -7,18 +7,19 @@
 //! pattern into `render`, `name`, `parse` and `write` functions, the `Numeral` and `Name`
 //! contracts, and the `scheme` xD's core loads.
 //!
-//! This module ships that library with nickel-embed, so no `.ncl` files need to be copied
-//! around. The files are copies of xD's `nickel/` folder; xD's are the canonical ones (see
-//! `nickel-embed/xd/SOURCE` for the commit they come from).
+//! xD publishes that library as the Nickel package `xd` (the `nickel/` folder of its
+//! repository). This module pins one version of it, [`VERSION`] at commit [`COMMIT`], and
+//! fetches it like any other Nickel git package (see [`crate::Packages`]), into Nickel's
+//! package cache. It's fetched once, on first use, and read from the cache after that; no copy
+//! of it lives in this crate.
 //!
-//! - [`Context::with_xd`] makes `import "xd.ncl"`, `import "jd.ncl"` and
-//!   `import "work-packages.ncl"` work in any program the context evaluates.
+//! - [`Context::with_xd`] makes `import xd` work in any program the context evaluates.
 //! - [`Pattern`] wraps one compiled pattern with typed `render`, `name`, `parse` and `write`.
 //!
-//! ```rust
+//! ```no_run
 //! use nickel_embed::xd::{Entry, Pattern};
 //!
-//! let mut jd = Pattern::jd();
+//! let mut jd = Pattern::jd()?;
 //! assert_eq!(jd.render(&[1, 1, 11])?, "11.11");
 //! assert_eq!(jd.name(&[1, 1, 11], "Passport")?, "11.11 Passport");
 //! assert_eq!(
@@ -26,71 +27,117 @@
 //!     Some(Entry { address: vec![1, 1, 11], link: None, label: Some("Passport".into()) }),
 //! );
 //! assert_eq!(jd.parse("11.1")?, None);
-//! # Ok::<(), Box<dyn std::error::Error>>(())
+//! # Ok::<(), nickel_embed::xd::Error>(())
 //! ```
 //!
 //! Units stack with `&`, as in Nickel. Work packages linked to JD numbers:
 //!
-//! ```rust
+//! ```no_run
 //! use nickel_embed::xd::Pattern;
 //!
-//! let mut wp = Pattern::new(r#"((import "jd.ncl") & (import "work-packages.ncl")).work_packages"#);
+//! let mut wp = Pattern::new("(xd.units.jd & xd.units.work_packages).work_packages")?;
 //! let entry = wp.parse("W0012~11.13 Tax return")?.unwrap();
 //! assert_eq!(entry.address, [12]);
 //! assert_eq!(entry.link, Some(vec![1, 1, 13]));
 //! assert_eq!(wp.write(&entry)?, "W0012~11.13 Tax return");
-//! # Ok::<(), Box<dyn std::error::Error>>(())
+//! # Ok::<(), nickel_embed::xd::Error>(())
+//! ```
+//!
+//! A program with a `Nickel-pkg.ncl` manifest of its own can depend on the same version
+//! directly, and use [`crate::Packages::from_manifest`] instead:
+//!
+//! ```nickel
+//! dependencies = {
+//!   xd = 'Git {
+//!     url = "https://github.com/bahiamovementcenter/xD.git",
+//!     ref = 'Commit "<COMMIT>",
+//!     path = "nickel",
+//!   },
+//! }
 //! ```
 
-use std::{
-    fmt::Write as _,
-    path::{MAIN_SEPARATOR_STR, Path, PathBuf},
-};
+use std::fmt::Write as _;
 
-use nickel_lang_core::cache::{InputFormat as CoreInputFormat, SourcePath, normalize_path};
+use nickel_lang_core::{identifier::Ident, package::PackageMap};
+use nickel_lang_package::{
+    Dependency, GitDependency, ManifestFile, resolve, snapshot::Snapshot, version::SemVer,
+};
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 
-use crate::Context;
+use crate::{
+    Context, PackageCache, Packages,
+    package::{package_error, package_message},
+};
 
-/// The bundled library: each file's name, as imported, and its contents.
-///
-/// For a [`crate::Program`], which reads imports from disk, write these files to a folder and
-/// add it with [`crate::ProgramBuilder::import_path`].
-pub const FILES: &[(&str, &str)] = &[
-    ("xd.ncl", include_str!("../xd/xd.ncl")),
-    ("jd.ncl", include_str!("../xd/jd.ncl")),
-    ("work-packages.ncl", include_str!("../xd/work-packages.ncl")),
-];
+/// The repository xD's package is fetched from.
+pub const GIT_URL: &str = "https://github.com/bahiamovementcenter/xD.git";
+/// The commit of [`GIT_URL`] this crate pins.
+pub const COMMIT: &str = "2f104cc8c7ea464f30af04d4ab6cbe11de0592d4";
+/// The package's folder in the repository.
+pub const PATH: &str = "nickel";
+/// The git tree of [`COMMIT`]: Nickel's package cache is keyed by content, so this is the
+/// folder the package is found in once fetched. Checked against a real fetch by the tests.
+pub const TREE: &str = "7410adb28de239ef002b00110db973bd81528a64";
+/// The package version at [`COMMIT`], from its `Nickel-pkg.ncl`.
+pub const VERSION: &str = "0.1.0";
 
-/// The folder the bundled files appear to live in. Nothing is read from or written to it: the
-/// files are registered in memory under these paths, and Nickel finds them there first.
-fn library_dir() -> PathBuf {
-    let dir = Path::new(MAIN_SEPARATOR_STR)
-        .join("nickel-embed")
-        .join("xd");
-    // Registered under the same normalized form Nickel computes for an import, so that the
-    // lookup hits the in-memory entry. Normalizing only fails when the current directory
-    // can't be read, and then the root-relative path is used as is.
-    normalize_path(&dir).unwrap_or(dir)
+/// xD's package, at the pinned version, as packages a [`Context`] or
+/// [`crate::ProgramBuilder`] can import as `xd`. Fetched into `cache` unless it's there.
+pub fn package(cache: &PackageCache) -> Result<Packages, crate::Error> {
+    let dir = cache.git_package_dir(TREE).join(PATH);
+    // The cache folder is named after the content's hash, so whatever is there is the pinned
+    // version.
+    // Without dependencies of its own, it needs nothing else, and no network.
+    if dir.join("main.ncl").is_file() {
+        let own = ManifestFile::from_path(dir.join("Nickel-pkg.ncl")).map_err(package_error)?;
+        if own.dependencies.is_empty() {
+            let mut map = PackageMap::default();
+            map.top_level.insert(Ident::new("xd"), dir);
+            return Ok(Packages { map });
+        }
+    }
+    fetch(cache)
+}
+
+/// Resolves the pin as a manifest with one dependency would: fetching it, and anything it
+/// depends on, without writing a lock file anywhere.
+fn fetch(cache: &PackageCache) -> Result<Packages, crate::Error> {
+    let url = gix::Url::try_from(GIT_URL)
+        .map_err(|e| package_message(format!("invalid git url `{GIT_URL}`: {e}")))?;
+    let commit = nickel_lang_package::ObjectId::from_hex(COMMIT.as_bytes())
+        .map_err(|e| package_message(format!("invalid commit `{COMMIT}`: {e}")))?;
+    let dependency = Dependency::Git(GitDependency {
+        url,
+        target: nickel_lang_git::Target::Commit(commit),
+        path: PATH.into(),
+    });
+    let config = cache.config.clone();
+    let root = ManifestFile {
+        parent_dir: config.cache_dir.clone(),
+        name: Ident::new("nickel-embed-xd"),
+        version: SemVer::new(0, 0, 0),
+        minimal_nickel_version: SemVer::new(0, 0, 0),
+        dependencies: [(Ident::new("xd"), dependency)].into(),
+        authors: Vec::new(),
+        description: String::new(),
+        keywords: Vec::new(),
+        license: String::new(),
+    };
+    let snapshot = Snapshot::new(&config, &root.parent_dir, &root).map_err(package_error)?;
+    let index =
+        nickel_lang_package::index::PackageIndex::shared(config.clone()).map_err(package_error)?;
+    let resolution = resolve::resolve(&root, snapshot, index, config).map_err(package_error)?;
+    nickel_lang_package::index::ensure_index_packages_downloaded(&resolution)
+        .map_err(package_error)?;
+    let map = resolution.package_map(&root).map_err(package_error)?;
+    Ok(Packages { map })
 }
 
 impl Context {
-    /// Makes xD's primitives importable: `import "xd.ncl"`, `import "jd.ncl"` and
-    /// `import "work-packages.ncl"`. See [`crate::xd`].
-    ///
-    /// The files are held in memory and searched after the importing file's own folder, like
-    /// any import path, so a file of the same name next to the importing one takes precedence.
-    pub fn with_xd(mut self) -> Self {
-        let dir = library_dir();
-        let sources = &mut self.vm_ctxt.import_resolver.sources;
-        for (name, contents) in FILES {
-            sources.add_string(
-                SourcePath::Path(dir.join(name), CoreInputFormat::Nickel),
-                (*contents).to_owned(),
-            );
-        }
-        sources.add_import_paths(std::iter::once(dir));
-        self
+    /// Makes xD's primitives importable as `import xd`, from Nickel's package cache, fetching
+    /// them first if they aren't there. See [`crate::xd`].
+    pub fn with_xd(self) -> Result<Self, crate::Error> {
+        Ok(self.with_packages(package(&PackageCache::new()?)?))
     }
 }
 
@@ -157,10 +204,9 @@ pub struct Pattern {
 }
 
 impl Pattern {
-    /// A pattern from Nickel code. `xd` (the primitives) is in scope, and the bundled files can
-    /// be imported:
+    /// A pattern from Nickel code, with `xd` (the package) in scope:
     ///
-    /// ```rust
+    /// ```no_run
     /// use nickel_embed::xd::Pattern;
     ///
     /// let mut boards = Pattern::new(
@@ -169,32 +215,36 @@ impl Pattern {
     ///          xd.sep.within,
     ///          xd.slot { name = "board", width = 2, alphabet = xd.alphabets.hex },
     ///        ]"#,
-    /// );
+    /// )?;
     /// assert_eq!(boards.render(&[11, 255])?, "11.FF");
     /// # Ok::<(), nickel_embed::xd::Error>(())
     /// ```
-    pub fn new(nickel: impl Into<String>) -> Self {
-        Self::with_context(Context::new(), nickel)
+    ///
+    /// Fetches the package into Nickel's cache if it isn't there yet.
+    pub fn new(nickel: impl Into<String>) -> Result<Self, Error> {
+        Ok(Self::with_context(Context::new().with_xd()?, nickel))
     }
 
     /// Like [`Self::new`], in a context of your own: with a trace output, a warning callback,
-    /// or import paths for patterns kept in your own files. The bundled files are added to it.
+    /// import paths for patterns kept in your own files, or the package from another
+    /// [`PackageCache`] (`Context::new().with_packages(xd::package(&cache)?)`). The context
+    /// must be able to `import xd`.
     pub fn with_context(ctx: Context, nickel: impl Into<String>) -> Self {
         Self {
-            ctx: ctx.with_xd(),
+            ctx,
             source: nickel.into(),
         }
     }
 
     /// Johnny.Decimal: `10-19` for an area, `11` for a category, `11.11 Label` for an ID.
-    pub fn jd() -> Self {
-        Self::new(r#"(import "jd.ncl").pattern"#)
+    pub fn jd() -> Result<Self, Error> {
+        Self::new("xd.units.jd.pattern")
     }
 
     /// Work packages on their own: `W0012 Label`, a flat number space. Stack them on a system
     /// to link them to its numbers; see the [module documentation](crate::xd).
-    pub fn work_packages() -> Self {
-        Self::new(r#"(import "work-packages.ncl").work_packages"#)
+    pub fn work_packages() -> Result<Self, Error> {
+        Self::new("xd.units.work_packages.work_packages")
     }
 
     /// The number for an address of depth 1 to the pattern's depth: `[1, 1, 11]` → `11.11`.
@@ -242,7 +292,7 @@ impl Pattern {
 
     fn program(&self, body: &str) -> String {
         format!(
-            "let xd = import \"xd.ncl\" in\nlet pattern = (\n{}\n) in\n{body}",
+            "let xd = import xd in\nlet pattern = (\n{}\n) in\n{body}",
             self.source
         )
     }
