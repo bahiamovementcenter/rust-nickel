@@ -33,6 +33,8 @@
 mod diagnostic;
 #[cfg(feature = "format")]
 mod format;
+#[cfg(feature = "package")]
+mod package;
 mod program;
 #[cfg(feature = "xd")]
 pub mod xd;
@@ -40,6 +42,8 @@ pub mod xd;
 pub use diagnostic::{Diagnostic, ErrorKind, Label, Location, Severity};
 #[cfg(feature = "format")]
 pub use format::{FormatError, format};
+#[cfg(feature = "package")]
+pub use package::{PackageCache, Packages};
 #[cfg(feature = "doc")]
 pub use program::Documentation;
 pub use program::{

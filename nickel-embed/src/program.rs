@@ -329,6 +329,8 @@ pub struct ProgramBuilder {
     field: FieldPath,
     trace: Box<dyn Write>,
     warnings: WarningReporter,
+    #[cfg(feature = "package")]
+    packages: Option<crate::Packages>,
 }
 
 impl Default for ProgramBuilder {
@@ -341,6 +343,8 @@ impl Default for ProgramBuilder {
             field: FieldPath::default(),
             trace: Box::new(io::sink()),
             warnings: WarningReporter::ignore(),
+            #[cfg(feature = "package")]
+            packages: None,
         }
     }
 }
@@ -427,6 +431,17 @@ impl ProgramBuilder {
         self
     }
 
+    /// Makes `packages` importable by name (`import my_dependency`), like `nickel` does for the
+    /// dependencies in a `Nickel-pkg.ncl` manifest. Calling it again merges the packages.
+    #[cfg(feature = "package")]
+    pub fn packages(mut self, packages: crate::Packages) -> Self {
+        self.packages = Some(match self.packages.take() {
+            Some(earlier) => earlier.merge(packages),
+            None => packages,
+        });
+        self
+    }
+
     /// Reads the sources and prepares the program.
     ///
     /// Fails if there are no sources or one can't be read. Parse and type errors are reported
@@ -445,6 +460,10 @@ impl ProgramBuilder {
                     priority: priority.to_core(),
                 }
             }));
+        #[cfg(feature = "package")]
+        if let Some(packages) = self.packages {
+            builder = builder.with_package_map(packages.map);
+        }
         for (i, source) in self.sources.into_iter().enumerate() {
             builder = source.add_to(builder, i);
         }

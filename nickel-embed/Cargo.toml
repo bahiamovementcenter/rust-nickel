@@ -13,8 +13,12 @@ repository.workspace = true
 format = ["nickel-lang-core/format"]
 # Documentation extraction, as JSON or Markdown.
 doc = ["nickel-lang-core/doc"]
-# xD's Nickel primitives, bundled, with typed render/parse wrappers (`nickel_embed::xd`).
-xd = []
+# Nickel packages (`import name`, declared in a `Nickel-pkg.ncl` manifest): fetches git
+# dependencies, so it pulls in gix and an HTTP client. Experimental, as in Nickel itself.
+package = ["dep:nickel-lang-package", "dep:nickel-lang-git", "dep:gix"]
+# xD's Nickel primitives as a pinned Nickel package, with typed render/parse wrappers
+# (`nickel_embed::xd`).
+xd = ["package"]
 
 [package.metadata.docs.rs]
 all-features = true
@@ -31,7 +35,12 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 serde_yaml = "0.9"
 toml = "1"
+# Pinned with nickel-lang-core: each release is built against one core version.
+nickel-lang-package = { version = "=0.8.0", optional = true }
+nickel-lang-git = { version = "=0.3.0", optional = true }
+gix = { version = "0.84", optional = true, default-features = false, features = ["blocking-http-transport-reqwest-rust-tls"] }
 
 [dev-dependencies]
+tempfile = "3"
 serde_json = "1"
 serde = { version = "1", features = ["derive"] }
