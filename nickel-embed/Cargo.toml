@@ -13,6 +13,8 @@ repository.workspace = true
 format = ["nickel-lang-core/format"]
 # Documentation extraction, as JSON or Markdown.
 doc = ["nickel-lang-core/doc"]
+# xD's Nickel primitives, bundled, with typed render/parse wrappers (`nickel_embed::xd`).
+xd = []
 
 [package.metadata.docs.rs]
 all-features = true

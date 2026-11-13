@@ -60,6 +60,35 @@ let info = program.query()?;                      // nickel query: doc, contract
   - `Program::docs()`, like `nickel doc`: documented fields, plus JSON and Markdown renderings
     (Cargo feature `doc`).
 
+## xD's primitives (feature `xd`)
+
+The Cargo feature `xd` bundles [xD](https://github.com/bahiamovementcenter/xD)'s Nickel library
+for numbering systems such as Johnny.Decimal, with typed wrappers for its `render`, `name`,
+`parse` and `write`:
+
+```rust
+use nickel_embed::xd::Pattern;
+
+let mut jd = Pattern::jd();
+assert_eq!(jd.name(&[1, 1, 11], "Passport")?, "11.11 Passport");
+let entry = jd.parse("11.11 Passport")?.unwrap();       // Entry { address: [1, 1, 11], label: Some("Passport"), .. }
+assert_eq!(jd.write(&entry)?, "11.11 Passport");
+
+let mut boards = Pattern::new(r#"xd.pattern [
+    xd.slot { name = "category", width = 2 }, xd.sep.within,
+    xd.slot { name = "board", width = 2, alphabet = xd.alphabets.hex },
+]"#);
+assert_eq!(boards.render(&[11, 255])?, "11.FF");
+```
+
+`Context::new().with_xd()` makes `import "xd.ncl"`, `import "jd.ncl"` and
+`import "work-packages.ncl"` work in any Nickel code, without copying files: they are held in
+memory. Units stack with `&`, as in xD: `(import "jd.ncl") & (import "work-packages.ncl")`.
+
+The `.ncl` files in `nickel-embed/xd/` are copies; xD's are canonical. `nickel-embed/xd/SOURCE`
+names the xD commit they come from, and `scripts/sync-xd.sh <xD clone> <commit>` copies them
+again. Their own examples (`xd/tests/primitives.ncl`) run as part of `cargo test --features xd`.
+
 `Context`, `Expr`, `Program` and `Error` are not `Send`: use one per thread.
 
 ## Development
