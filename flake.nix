@@ -99,6 +99,10 @@
               builtins.replaceStrings [ "-" ] [ "_" ] pkgs.stdenv.hostPlatform.rust.rustcTarget
             }" =
               "0";
+            # The `doc` feature's syntax highlighting links oniguruma, which nixpkgs's Cargo
+            # setup tells onig_sys to take from the system (RUSTONIG_SYSTEM_LIBONIG).
+            nativeBuildInputs = [ pkgs.pkg-config ];
+            buildInputs = [ pkgs.oniguruma ];
             cargoBuildFlags = [
               "-p"
               "nickel-embed-capi"
