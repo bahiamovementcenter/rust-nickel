@@ -1,0 +1,28 @@
+[package]
+name = "nickel-embed-capi"
+version = "0.1.0"
+description = "C API for nickel-embed: a superset of Nickel's nickel_lang.h"
+keywords = ["configuration", "language", "nickel", "ffi"]
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[lib]
+# Named like Nickel's own C library, so the archive (libnickel_lang.a) is a drop-in replacement
+# for the one go-nickel vendors.
+name = "nickel_lang"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[features]
+default = ["doc", "packages"]
+# `nickel_format`. Off by default: it pulls in Topiary and tree-sitter. Without it, the function
+# still exists and returns an error, so the header is the same either way.
+format = ["nickel-embed/format"]
+# `nickel_program_docs`. Same arrangement as `format`.
+doc = ["nickel-embed/doc"]
+# `nickel_package_map_load_manifest`: package manifests, resolved and fetched with gix. Same
+# arrangement as `format`; package maps built by hand work either way.
+packages = ["nickel-embed/packages"]
+
+[dependencies]
+nickel-embed = { path = "../nickel-embed" }
