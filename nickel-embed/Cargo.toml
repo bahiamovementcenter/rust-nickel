@@ -13,12 +13,12 @@ repository.workspace = true
 format = ["nickel-lang-core/format"]
 # Documentation extraction, as JSON or Markdown.
 doc = ["nickel-lang-core/doc"]
-# Nickel packages (`import name`, declared in a `Nickel-pkg.ncl` manifest): fetches git
-# dependencies, so it pulls in gix and an HTTP client. Experimental, as in Nickel itself.
-package = ["dep:nickel-lang-package", "dep:nickel-lang-git", "dep:gix"]
+# Package manifests (`Nickel-pkg.ncl`): version resolution and fetching with gix. Without it,
+# `PackageMap` still works with directories you provide.
+packages = ["dep:nickel-lang-package"]
 # xD's Nickel primitives as a pinned Nickel package, with typed render/parse wrappers
-# (`nickel_embed::xd`).
-xd = ["package"]
+# (`nickel_embed::xd`). Fetches it over HTTPS on first use.
+xd = ["packages", "dep:nickel-lang-git", "dep:gix"]
 
 [package.metadata.docs.rs]
 all-features = true
@@ -28,6 +28,10 @@ all-features = true
 # exactly and bumped deliberately.
 nickel-lang-core = { version = "=0.19.0", default-features = false }
 nickel-lang-vector = "0.2"
+# Released in lockstep with nickel-lang-core, so pinned to the matching version.
+nickel-lang-package = { version = "=0.8.0", optional = true }
+nickel-lang-git = { version = "=0.3.0", optional = true }
+gix = { version = "0.84", optional = true, default-features = false, features = ["blocking-http-transport-reqwest-rust-tls"] }
 codespan-reporting = { version = "0.13", features = ["serialization"] }
 indexmap = "2.8"
 malachite = "0.9"
@@ -35,10 +39,6 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 serde_yaml = "0.9"
 toml = "1"
-# Pinned with nickel-lang-core: each release is built against one core version.
-nickel-lang-package = { version = "=0.8.0", optional = true }
-nickel-lang-git = { version = "=0.3.0", optional = true }
-gix = { version = "0.84", optional = true, default-features = false, features = ["blocking-http-transport-reqwest-rust-tls"] }
 
 [dev-dependencies]
 tempfile = "3"

@@ -1,139 +1,191 @@
-//! Nickel packages (Cargo feature `package`): `import name` of a library declared in a
-//! `Nickel-pkg.ncl` manifest, as `nickel` built with `package-experimental` handles them.
+//! Package imports: `import foo` resolves through a [`PackageMap`].
 //!
-//! Package management is experimental in Nickel itself, and so is this module.
-//!
-//! ```no_run
-//! use nickel_embed::{Context, PackageCache, Packages};
-//!
-//! // Locks the manifest's dependencies (writing `Nickel-pkg.lock` next to it, as `nickel`
-//! // does) and fetches any that aren't in the cache yet.
-//! let packages = Packages::from_manifest("config/Nickel-pkg.ncl", &PackageCache::new()?)?;
-//! let mut ctx = Context::new().with_packages(packages);
-//! let expr = ctx.eval_deep("(import my_dependency).value")?;
-//! # Ok::<(), nickel_embed::Error>(())
-//! ```
+//! A map can be built by hand from directories you already have (fetched by Nix, vendored, and so
+//! on), with no extra dependencies. With the `packages` feature, [`PackageMap::from_manifest`]
+//! builds it from a `Nickel-pkg.ncl` manifest the way the `nickel` command does: it resolves
+//! versions, fetches git and index dependencies into a cache and writes `Nickel-pkg.lock`.
 
-use std::path::{Path, PathBuf};
-
-use nickel_lang_core::{
-    error::{Error as NickelCoreError, IOError},
-    files::Files,
-    package::PackageMap,
+use std::{
+    fmt,
+    path::{Path, PathBuf},
 };
-use nickel_lang_package::{ManifestFile, config::Config};
 
-use crate::Error;
+use nickel_lang_core::{cache::normalize_path, identifier::Ident, package::PackageMap as CoreMap};
 
-/// Where fetched packages are kept, and where they're fetched from.
-#[derive(Clone, Debug)]
-pub struct PackageCache {
-    pub(crate) config: Config,
-}
+/// The name of a package manifest, as `nickel-lang-package` spells it.
+const MANIFEST_NAME: &str = "Nickel-pkg.ncl";
 
-impl PackageCache {
-    /// Nickel's own cache folder (on Linux, `$XDG_CACHE_HOME/nickel`), shared with the
-    /// `nickel` command line tool.
-    pub fn new() -> Result<Self, Error> {
-        Ok(Self {
-            config: Config::new().map_err(package_error)?,
-        })
-    }
-
-    /// A cache in the given folder.
-    pub fn at(dir: impl Into<PathBuf>) -> Result<Self, Error> {
-        Ok(Self {
-            config: Config::new()
-                .map_err(package_error)?
-                .with_cache_dir(dir.into()),
-        })
-    }
-
-    /// Fetches git packages from `replacement` whenever a dependency names `url`: for mirrors,
-    /// vendored copies and tests. The dependency's pinned commit still has to be there.
-    pub fn replace_git(mut self, url: &str, replacement: &str) -> Result<Self, Error> {
-        let parse = |u: &str| {
-            gix::Url::try_from(u)
-                .map_err(|e| package_message(format!("invalid git url `{u}`: {e}")))
-        };
-        self.config
-            .git_replacements
-            .insert(parse(url)?, parse(replacement)?);
-        Ok(self)
-    }
-
-    /// The folder a git package whose top-level tree is `tree` is unpacked in.
-    #[cfg_attr(not(feature = "xd"), allow(dead_code))]
-    pub(crate) fn git_package_dir(&self, tree: &str) -> PathBuf {
-        self.config.git_package_dir.join(tree)
-    }
-}
-
-/// The packages a program can import by name, with where each one is on disk.
+/// Where package imports (`import foo`) are found.
+///
+/// Each package is a directory, and importing it evaluates its `main.ncl`. Names are local to the
+/// importer: the program's own dependencies are set with [`Self::package`], and those of a
+/// package with [`Self::dependency`], so two packages can each have their own `foo`.
+///
+/// ```rust
+/// use nickel_embed::{PackageMap, Program, Source};
+///
+/// let dir = std::env::temp_dir().join("nickel-embed-doc-greeting");
+/// std::fs::create_dir_all(&dir)?;
+/// std::fs::write(dir.join("main.ncl"), r#"{ hello = "world" }"#)?;
+///
+/// let mut program = Program::builder()
+///     .source(Source::code("(import greeting).hello"))
+///     .package_map(PackageMap::new().package("greeting", &dir))
+///     .build()?;
+/// assert_eq!(program.eval_deep()?.as_str(), Some("world"));
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
 #[derive(Clone, Debug, Default)]
-pub struct Packages {
-    pub(crate) map: PackageMap,
+#[must_use]
+pub struct PackageMap {
+    inner: CoreMap,
 }
 
-impl Packages {
-    /// The dependencies of a `Nickel-pkg.ncl` manifest, as `nickel` resolves them: through its
-    /// lock file, which is written next to the manifest when it's missing or out of date, and
-    /// fetching what isn't in `cache` yet.
-    pub fn from_manifest(manifest: impl AsRef<Path>, cache: &PackageCache) -> Result<Self, Error> {
-        let manifest = ManifestFile::from_path(manifest.as_ref()).map_err(package_error)?;
-        let (_lock, resolution) = manifest.lock(cache.config.clone()).map_err(package_error)?;
-        nickel_lang_package::index::ensure_index_packages_downloaded(&resolution)
-            .map_err(package_error)?;
-        let map = resolution.package_map(&manifest).map_err(package_error)?;
-        Ok(Self { map })
+impl PackageMap {
+    /// An empty map: every package import fails until packages are added.
+    pub fn new() -> Self {
+        Self::default()
     }
 
-    /// Both sets of packages. Where both have a top-level package of the same name, `other`'s
-    /// is kept.
-    pub fn merge(mut self, other: Packages) -> Self {
-        self.map.top_level.extend(other.map.top_level);
-        self.map.packages.extend(other.map.packages);
+    /// Makes `import name` in the program's own sources load the package in `dir`.
+    ///
+    /// A relative `dir` is taken from the current directory.
+    pub fn package(mut self, name: &str, dir: impl AsRef<Path>) -> Self {
+        self.inner
+            .top_level
+            .insert(Ident::new(name), normalize(dir.as_ref()));
         self
     }
 
-    /// The top-level packages, by the name they're imported with, and the folder each is in.
-    pub fn top_level(&self) -> impl Iterator<Item = (&str, &Path)> {
-        self.map
+    /// Makes `import name` inside the package in `parent` load the package in `dir`.
+    ///
+    /// `parent` must be the directory the parent package was added with.
+    pub fn dependency(
+        mut self,
+        parent: impl AsRef<Path>,
+        name: &str,
+        dir: impl AsRef<Path>,
+    ) -> Self {
+        self.inner.packages.insert(
+            (normalize(parent.as_ref()), Ident::new(name)),
+            normalize(dir.as_ref()),
+        );
+        self
+    }
+
+    /// The program's own packages, by name, sorted.
+    pub fn packages(&self) -> Vec<(&str, &Path)> {
+        let mut packages: Vec<_> = self
+            .inner
             .top_level
             .iter()
-            .map(|(name, path)| (name.label(), path.as_path()))
+            .map(|(name, dir)| (name.label(), dir.as_path()))
+            .collect();
+        packages.sort();
+        packages
+    }
+
+    /// The dependencies of packages, as `(parent, name, dir)`, sorted.
+    pub fn dependencies(&self) -> Vec<(&Path, &str, &Path)> {
+        let mut deps: Vec<_> = self
+            .inner
+            .packages
+            .iter()
+            .map(|((parent, name), dir)| (parent.as_path(), name.label(), dir.as_path()))
+            .collect();
+        deps.sort();
+        deps
+    }
+
+    /// Finds the manifest for `dir`: the nearest `Nickel-pkg.ncl` in it or a parent
+    /// directory, as the `nickel` command looks for one.
+    pub fn find_manifest(dir: impl AsRef<Path>) -> Option<PathBuf> {
+        dir.as_ref()
+            .ancestors()
+            .map(|dir| dir.join(MANIFEST_NAME))
+            .find(|path| path.is_file())
+    }
+
+    pub(crate) fn into_core(self) -> CoreMap {
+        self.inner
+    }
+
+    #[cfg(feature = "xd")]
+    pub(crate) fn from_core(inner: CoreMap) -> Self {
+        Self { inner }
     }
 }
 
-impl crate::Context {
-    /// Makes `packages` importable by name: `import my_dependency`. Packages added earlier stay,
-    /// unless one of the new ones has the same name.
-    pub fn with_packages(mut self, packages: Packages) -> Self {
-        let sources = &mut self.vm_ctxt.import_resolver.sources;
-        let merged = match sources.package_map.take() {
-            Some(map) => Packages { map }.merge(packages),
-            None => packages,
-        };
-        sources.set_package_map(merged.map);
-        self
+/// The map as `nickel package debug-resolution` prints it.
+impl fmt::Display for PackageMap {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.inner.fmt(f)
     }
 }
 
-pub(crate) fn package_message(message: String) -> Error {
-    Error {
-        error: Box::new(NickelCoreError::IOError(IOError(message))),
-        files: Files::empty(),
-    }
+// Nickel looks up a package's dependencies by the exact path the package was loaded from, so
+// every path goes through the same normalization the package manager uses.
+fn normalize(dir: &Path) -> PathBuf {
+    normalize_path(dir).unwrap_or_else(|_| dir.to_owned())
 }
 
-/// A manifest that fails to evaluate keeps Nickel's own error, with its diagnostics. Other
-/// package errors become [`crate::ErrorKind::Io`] errors that carry the package manager's
-/// message: fetching, locking and reading manifests are all I/O from the program's side.
-pub(crate) fn package_error(e: nickel_lang_package::error::Error) -> Error {
-    match e {
-        nickel_lang_package::error::Error::ManifestEval { files, error, .. } => {
-            Error { error, files }
+#[cfg(feature = "packages")]
+pub(crate) mod manifest {
+    use std::path::{Path, PathBuf};
+
+    use nickel_lang_core::{error::IOError, files::Files};
+    use nickel_lang_package::{ManifestFile, config::Config, error::Error as PackageError, index};
+
+    use super::PackageMap;
+    use crate::{Error, ErrorKind};
+
+    impl PackageMap {
+        /// Builds the map for a package manifest (`Nickel-pkg.ncl`), like the `nickel` command
+        /// does before evaluating. Requires the `packages` feature.
+        ///
+        /// This resolves versions, fetches git and index dependencies that aren't cached (into
+        /// the platform's cache directory, such as `~/.cache/nickel`), and writes or updates
+        /// `Nickel-pkg.lock` next to the manifest. Nickel's package manager is experimental: its
+        /// manifest and lock formats may change.
+        pub fn from_manifest(manifest: impl AsRef<Path>) -> Result<Self, Error> {
+            resolve(manifest.as_ref(), None)
         }
-        e => package_message(format!("Nickel package: {e}")),
+
+        /// Like [`Self::from_manifest`], with fetched packages cached in `cache_dir`, like
+        /// `--package-cache-dir`.
+        pub fn from_manifest_with_cache(
+            manifest: impl AsRef<Path>,
+            cache_dir: impl Into<PathBuf>,
+        ) -> Result<Self, Error> {
+            resolve(manifest.as_ref(), Some(cache_dir.into()))
+        }
+    }
+
+    fn resolve(path: &Path, cache_dir: Option<PathBuf>) -> Result<PackageMap, Error> {
+        // The package manager takes the manifest's parent as the project root and panics if
+        // there's none, so give it an absolute path.
+        let path = std::path::absolute(path)?;
+        let manifest = ManifestFile::from_path(&path).map_err(package_error)?;
+        let mut config = Config::new().map_err(package_error)?;
+        if let Some(dir) = cache_dir {
+            config = config.with_cache_dir(dir);
+        }
+        let (_lock, resolution) = manifest.lock(config).map_err(package_error)?;
+        index::ensure_index_packages_downloaded(&resolution).map_err(package_error)?;
+        let inner = resolution.package_map(&manifest).map_err(package_error)?;
+        Ok(PackageMap { inner })
+    }
+
+    pub(crate) fn package_error(error: PackageError) -> Error {
+        let (error, files) = match error {
+            // The manifest is Nickel code, so its errors point into it.
+            PackageError::ManifestEval { files, error, .. } => (error, files),
+            other => (Box::new(IOError(other.to_string()).into()), Files::empty()),
+        };
+        Error {
+            error,
+            files,
+            kind: Some(ErrorKind::Package),
+        }
     }
 }

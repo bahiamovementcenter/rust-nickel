@@ -9,7 +9,7 @@
 //!
 //! xD publishes that library as the Nickel package `xd` (the `nickel/` folder of its
 //! repository). This module pins one version of it, [`VERSION`] at commit [`COMMIT`], and
-//! fetches it like any other Nickel git package (see [`crate::Packages`]), into Nickel's
+//! fetches it like any other Nickel git package, into Nickel's
 //! package cache. It's fetched once, on first use, and read from the cache after that; no copy
 //! of it lives in this crate.
 //!
@@ -44,7 +44,7 @@
 //! ```
 //!
 //! A program with a `Nickel-pkg.ncl` manifest of its own can depend on the same version
-//! directly, and use [`crate::Packages::from_manifest`] instead:
+//! directly, and use [`crate::PackageMap::from_manifest`] instead:
 //!
 //! ```nickel
 //! dependencies = {
@@ -58,16 +58,16 @@
 
 use std::fmt::Write as _;
 
-use nickel_lang_core::{identifier::Ident, package::PackageMap};
+use std::path::{Path, PathBuf};
+
+use nickel_lang_core::{error::IOError, files::Files, identifier::Ident};
 use nickel_lang_package::{
-    Dependency, GitDependency, ManifestFile, resolve, snapshot::Snapshot, version::SemVer,
+    Dependency, GitDependency, ManifestFile, config::Config, resolve, snapshot::Snapshot,
+    version::SemVer,
 };
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 
-use crate::{
-    Context, PackageCache, Packages,
-    package::{package_error, package_message},
-};
+use crate::{Context, ErrorKind, PackageMap, package::manifest::package_error};
 
 /// The repository xD's package is fetched from.
 pub const GIT_URL: &str = "https://github.com/bahiamovementcenter/xD.git";
@@ -81,37 +81,58 @@ pub const TREE: &str = "7410adb28de239ef002b00110db973bd81528a64";
 /// The package version at [`COMMIT`], from its `Nickel-pkg.ncl`.
 pub const VERSION: &str = "0.1.0";
 
-/// xD's package, at the pinned version, as packages a [`Context`] or
-/// [`crate::ProgramBuilder`] can import as `xd`. Fetched into `cache` unless it's there.
-pub fn package(cache: &PackageCache) -> Result<Packages, crate::Error> {
-    let dir = cache.git_package_dir(TREE).join(PATH);
+/// A [`PackageMap`] in which `import xd` loads xD's package at the pinned version, from
+/// Nickel's package cache (such as `~/.cache/nickel`), fetching it first if it isn't there.
+/// Add your own packages to it with [`PackageMap::package`].
+pub fn package_map() -> Result<PackageMap, crate::Error> {
+    resolve_pin(Config::new().map_err(package_error)?)
+}
+
+/// Like [`package_map`], with packages cached in `cache_dir`, like `--package-cache-dir`.
+pub fn package_map_with_cache(cache_dir: impl Into<PathBuf>) -> Result<PackageMap, crate::Error> {
+    resolve_pin(
+        Config::new()
+            .map_err(package_error)?
+            .with_cache_dir(cache_dir.into()),
+    )
+}
+
+/// Like [`package_map_with_cache`], fetching from `mirror` (a URL or a path to a clone of xD
+/// that has [`COMMIT`]) instead of [`GIT_URL`]: offline, or behind a proxy.
+pub fn package_map_from_mirror(
+    cache_dir: impl Into<PathBuf>,
+    mirror: &str,
+) -> Result<PackageMap, crate::Error> {
+    let mut config = Config::new()
+        .map_err(package_error)?
+        .with_cache_dir(cache_dir.into());
+    config.git_replacements.insert(url(GIT_URL)?, url(mirror)?);
+    resolve_pin(config)
+}
+
+fn resolve_pin(config: Config) -> Result<PackageMap, crate::Error> {
+    let dir = config.git_package_dir.join(TREE).join(PATH);
     // The cache folder is named after the content's hash, so whatever is there is the pinned
-    // version.
-    // Without dependencies of its own, it needs nothing else, and no network.
+    // version. Without dependencies of its own it needs nothing else, and no network.
     if dir.join("main.ncl").is_file() {
         let own = ManifestFile::from_path(dir.join("Nickel-pkg.ncl")).map_err(package_error)?;
         if own.dependencies.is_empty() {
-            let mut map = PackageMap::default();
-            map.top_level.insert(Ident::new("xd"), dir);
-            return Ok(Packages { map });
+            return Ok(PackageMap::new().package("xd", &dir));
         }
     }
-    fetch(cache)
+    fetch(config)
 }
 
-/// Resolves the pin as a manifest with one dependency would: fetching it, and anything it
-/// depends on, without writing a lock file anywhere.
-fn fetch(cache: &PackageCache) -> Result<Packages, crate::Error> {
-    let url = gix::Url::try_from(GIT_URL)
-        .map_err(|e| package_message(format!("invalid git url `{GIT_URL}`: {e}")))?;
+/// Resolves the pin as a manifest with this one dependency would: fetching it, and anything
+/// it depends on, without writing a lock file anywhere.
+fn fetch(config: Config) -> Result<PackageMap, crate::Error> {
     let commit = nickel_lang_package::ObjectId::from_hex(COMMIT.as_bytes())
-        .map_err(|e| package_message(format!("invalid commit `{COMMIT}`: {e}")))?;
+        .map_err(|e| message(format!("invalid commit `{COMMIT}`: {e}")))?;
     let dependency = Dependency::Git(GitDependency {
-        url,
+        url: url(GIT_URL)?,
         target: nickel_lang_git::Target::Commit(commit),
         path: PATH.into(),
     });
-    let config = cache.config.clone();
     let root = ManifestFile {
         parent_dir: config.cache_dir.clone(),
         name: Ident::new("nickel-embed-xd"),
@@ -130,14 +151,33 @@ fn fetch(cache: &PackageCache) -> Result<Packages, crate::Error> {
     nickel_lang_package::index::ensure_index_packages_downloaded(&resolution)
         .map_err(package_error)?;
     let map = resolution.package_map(&root).map_err(package_error)?;
-    Ok(Packages { map })
+    Ok(PackageMap::from_core(map))
+}
+
+fn url(u: &str) -> Result<gix::Url, crate::Error> {
+    let path = Path::new(u);
+    let parsed = if !u.contains("://") && path.exists() {
+        gix::Url::try_from(std::path::absolute(path)?.as_path())
+    } else {
+        gix::Url::try_from(u)
+    };
+    parsed.map_err(|e| message(format!("invalid git url `{u}`: {e}")))
+}
+
+fn message(text: String) -> crate::Error {
+    crate::Error {
+        error: Box::new(IOError(text).into()),
+        files: Files::empty(),
+        kind: Some(ErrorKind::Package),
+    }
 }
 
 impl Context {
-    /// Makes xD's primitives importable as `import xd`, from Nickel's package cache, fetching
-    /// them first if they aren't there. See [`crate::xd`].
+    /// Makes xD's primitives importable as `import xd`: [`package_map`] in a context. It
+    /// replaces any package map the context had; to have both, add yours to
+    /// [`package_map`]'s.
     pub fn with_xd(self) -> Result<Self, crate::Error> {
-        Ok(self.with_packages(package(&PackageCache::new()?)?))
+        Ok(self.with_package_map(package_map()?))
     }
 }
 
@@ -226,9 +266,9 @@ impl Pattern {
     }
 
     /// Like [`Self::new`], in a context of your own: with a trace output, a warning callback,
-    /// import paths for patterns kept in your own files, or the package from another
-    /// [`PackageCache`] (`Context::new().with_packages(xd::package(&cache)?)`). The context
-    /// must be able to `import xd`.
+    /// import paths for patterns kept in your own files, or the package from another cache
+    /// (`Context::new().with_package_map(xd::package_map_with_cache(dir)?)`). The context must
+    /// be able to `import xd`.
     pub fn with_context(ctx: Context, nickel: impl Into<String>) -> Self {
         Self {
             ctx,

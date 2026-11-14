@@ -24,7 +24,7 @@ use nickel_lang_core::{
     typecheck::TypecheckMode as CoreTypecheckMode,
 };
 
-use crate::{Diagnostic, Error, Expr, FieldMetadata, diagnostic::WarningReporter};
+use crate::{Diagnostic, Error, Expr, FieldMetadata, PackageMap, diagnostic::WarningReporter};
 
 /// The format of a [`Source`].
 #[non_exhaustive]
@@ -262,6 +262,7 @@ impl FromStr for FieldPath {
             Err(e) => Err(Error {
                 error: Box::new(e.into()),
                 files: cache.sources.files().clone(),
+                kind: None,
             }),
         }
     }
@@ -327,10 +328,9 @@ pub struct ProgramBuilder {
     contract_files: Vec<PathBuf>,
     overrides: Vec<(FieldPath, String, Priority)>,
     field: FieldPath,
+    package_map: Option<PackageMap>,
     trace: Box<dyn Write>,
     warnings: WarningReporter,
-    #[cfg(feature = "package")]
-    packages: Option<crate::Packages>,
 }
 
 impl Default for ProgramBuilder {
@@ -341,10 +341,9 @@ impl Default for ProgramBuilder {
             contract_files: Vec::new(),
             overrides: Vec::new(),
             field: FieldPath::default(),
+            package_map: None,
             trace: Box::new(io::sink()),
             warnings: WarningReporter::ignore(),
-            #[cfg(feature = "package")]
-            packages: None,
         }
     }
 }
@@ -413,6 +412,15 @@ impl ProgramBuilder {
         self
     }
 
+    /// Resolves package imports (`import foo`) with this map. Without one, they fail.
+    ///
+    /// With the `packages` feature, [`PackageMap::from_manifest`] builds the map from a
+    /// `Nickel-pkg.ncl` manifest, as the `nickel` command does.
+    pub fn package_map(mut self, map: PackageMap) -> Self {
+        self.package_map = Some(map);
+        self
+    }
+
     /// Evaluates, exports or queries only this field, like `--field`.
     pub fn field(mut self, path: FieldPath) -> Self {
         self.field = path;
@@ -428,17 +436,6 @@ impl ProgramBuilder {
     /// Calls `on_warning` with each warning Nickel reports. Warnings are discarded otherwise.
     pub fn on_warning(mut self, on_warning: impl FnMut(Diagnostic) + 'static) -> Self {
         self.warnings = WarningReporter(Box::new(on_warning));
-        self
-    }
-
-    /// Makes `packages` importable by name (`import my_dependency`), like `nickel` does for the
-    /// dependencies in a `Nickel-pkg.ncl` manifest. Calling it again merges the packages.
-    #[cfg(feature = "package")]
-    pub fn packages(mut self, packages: crate::Packages) -> Self {
-        self.packages = Some(match self.packages.take() {
-            Some(earlier) => earlier.merge(packages),
-            None => packages,
-        });
         self
     }
 
@@ -460,9 +457,8 @@ impl ProgramBuilder {
                     priority: priority.to_core(),
                 }
             }));
-        #[cfg(feature = "package")]
-        if let Some(packages) = self.packages {
-            builder = builder.with_package_map(packages.map);
+        if let Some(map) = self.package_map {
+            builder = builder.with_package_map(map.into_core());
         }
         for (i, source) in self.sources.into_iter().enumerate() {
             builder = source.add_to(builder, i);
@@ -476,6 +472,7 @@ fn builder_error(e: BuilderError) -> Error {
     Error {
         error: Box::new(NickelCoreError::IOError(IOError(e.to_string()))),
         files: Files::empty(),
+        kind: None,
     }
 }
 
@@ -540,6 +537,14 @@ impl Program {
             .map_err(|e| self.export_error(e))
     }
 
+    /// Serializes an expression from this program, such as a field reached through
+    /// [`Self::eval_shallow`]. It must be fully evaluated and contain no enum variants or
+    /// functions; errors point into this program's sources.
+    pub fn export_expr(&self, expr: &Expr, format: ExportFormat) -> Result<String, Error> {
+        expr.export(format.to_core())
+            .map_err(|e| self.export_error(e))
+    }
+
     /// Like [`Self::export`], writing to `out`.
     pub fn export_to(&mut self, format: ExportFormat, mut out: impl Write) -> Result<(), Error> {
         let text = self.export(format)?;
@@ -589,6 +594,7 @@ impl Program {
                 .map_err(|error| Error {
                     error: Box::new(error),
                     files: Files::empty(),
+                    kind: None,
                 })
         };
         let mut json = Vec::new();
@@ -618,6 +624,7 @@ impl Program {
         result.map_err(|error| Error {
             error: Box::new(error),
             files: self.inner.files(),
+            kind: None,
         })
     }
 
@@ -625,6 +632,7 @@ impl Program {
         Error {
             error: Box::new(error.with_pos_table(self.inner.pos_table().clone()).into()),
             files: self.inner.files(),
+            kind: None,
         }
     }
 }

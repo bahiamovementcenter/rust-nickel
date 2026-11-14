@@ -6,41 +6,42 @@
 //! contain the pinned commit.
 #![cfg(feature = "xd")]
 
-use std::sync::OnceLock;
+use std::{
+    path::{Path, PathBuf},
+    sync::OnceLock,
+};
 
 use nickel_embed::{
-    Context, ErrorKind, PackageCache, Packages,
+    Context, ErrorKind, PackageMap,
     xd::{self, Entry, Error, Pattern},
 };
 
 /// One fetch for the whole test binary, into a cache that lives as long as it does.
-fn cache() -> &'static PackageCache {
-    static CACHE: OnceLock<(tempfile::TempDir, PackageCache)> = OnceLock::new();
-    &CACHE
+fn cache_dir() -> &'static Path {
+    static CACHE: OnceLock<tempfile::TempDir> = OnceLock::new();
+    CACHE
         .get_or_init(|| {
             let dir = tempfile::tempdir().unwrap();
-            let mut cache = PackageCache::at(dir.path()).unwrap();
-            if let Ok(repo) = std::env::var("NICKEL_EMBED_XD_REPO") {
-                let repo = if repo.contains("://") {
-                    repo
-                } else {
-                    format!("file://{}", std::fs::canonicalize(repo).unwrap().display())
-                };
-                cache = cache.replace_git(xd::GIT_URL, &repo).unwrap();
-            }
-            // Fetch once up front, so the tests below only read the cache.
-            xd::package(&cache).unwrap();
-            (dir, cache)
+            let _ = fetch(dir.path().to_owned()).unwrap();
+            dir
         })
-        .1
+        .path()
 }
 
-fn packages() -> Packages {
-    xd::package(cache()).unwrap()
+fn fetch(dir: PathBuf) -> Result<PackageMap, nickel_embed::Error> {
+    match std::env::var("NICKEL_EMBED_XD_REPO") {
+        Ok(mirror) => xd::package_map_from_mirror(dir, &mirror),
+        Err(_) => xd::package_map_with_cache(dir),
+    }
+}
+
+/// From the cache filled above, so with no network.
+fn packages() -> PackageMap {
+    xd::package_map_with_cache(cache_dir()).unwrap()
 }
 
 fn context() -> Context {
-    Context::new().with_packages(packages())
+    Context::new().with_package_map(packages())
 }
 
 fn pattern(code: &str) -> Pattern {
@@ -71,11 +72,10 @@ fn the_package_is_imported_by_name() {
 
 #[test]
 fn the_cached_package_is_the_pinned_commit() {
-    let (name, dir) = packages()
-        .top_level()
-        .map(|(n, d)| (n.to_owned(), d.to_owned()))
-        .next()
-        .unwrap();
+    let map = packages();
+    let [(name, dir)] = map.packages()[..] else {
+        panic!("{map}")
+    };
     assert_eq!(name, "xd");
     assert!(
         dir.ends_with(std::path::Path::new(xd::TREE).join(xd::PATH)),
@@ -94,7 +94,7 @@ fn programs_import_it_too() {
         .source(nickel_embed::Source::code(
             r#"{ id = (import xd).units.jd.pattern.render [1, 1, 11] }"#,
         ))
-        .packages(packages())
+        .package_map(packages())
         .build()
         .unwrap();
     let json = program.export(nickel_embed::ExportFormat::Json).unwrap();

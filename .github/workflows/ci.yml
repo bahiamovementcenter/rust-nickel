@@ -22,9 +22,39 @@ jobs:
       - run: cargo test
       - run: cargo test --all-features
 
+  capi:
+    # The C API through its header: the generated header is up to date, and the C tests (Nickel's
+    # own, and the superset's) pass against the library.
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cbindgen@0.29.4
+      - run: cbindgen --config nickel-embed-capi/cbindgen.toml --crate nickel-embed-capi --output nickel-embed-capi/include/nickel_lang.h --verify
+      - run: nickel-embed-capi/tests/c/run.sh
+
+  # The NIF only runs inside the Erlang VM, so it is tested from Erlang.
+  nif:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - uses: erlef/setup-beam@v1
+        with:
+          otp-version: "27"
+      - run: ./nickel-embed-nif/test/run.sh
+
   nix:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
       - uses: DeterminateSystems/determinate-nix-action@v3
-      - run: nix flake check --no-build
+      # Builds the packaged NIF and runs its Erlang tests, as gleam-nickel's Nix checks do.
+      - run: nix flake check -L
