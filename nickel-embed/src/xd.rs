@@ -72,12 +72,12 @@ use crate::{Context, ErrorKind, PackageMap, package::manifest::package_error};
 /// The repository xD's package is fetched from.
 pub const GIT_URL: &str = "https://github.com/bahiamovementcenter/xD.git";
 /// The commit of [`GIT_URL`] this crate pins.
-pub const COMMIT: &str = "8a1e9300da8c7614b557e072962b5d44f08d60fe";
+pub const COMMIT: &str = "084237c00f782e21662e87bde811f4b7421bbeda";
 /// The package's folder in the repository.
 pub const PATH: &str = "nickel";
 /// The git tree of [`COMMIT`]: Nickel's package cache is keyed by content, so this is the
 /// folder the package is found in once fetched. Checked against a real fetch by the tests.
-pub const TREE: &str = "7410adb28de239ef002b00110db973bd81528a64";
+pub const TREE: &str = "343fdc183f3b645f38c06ec807384c1c60df9863";
 /// The package version at [`COMMIT`], from its `Nickel-pkg.ncl`.
 pub const VERSION: &str = "0.1.0";
 
