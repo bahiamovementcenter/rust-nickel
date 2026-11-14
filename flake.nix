@@ -75,10 +75,10 @@
       packages = forEachSupportedSystem (
         { pkgs, ... }:
         rec {
-          # The Erlang NIF, as lib/libnickel_embed_nif.so. gleam-nickel loads it
-          # through NICKEL_EMBED_NIF.
-          nickel-embed-nif = pkgs.rustPlatform.buildRustPackage {
-            pname = "nickel-embed-nif";
+          # The C library (lib/libnickel_lang.a and .so) and its header. The language
+          # bindings live in their own repositories: see docs/bindings.md.
+          nickel-embed-capi = pkgs.rustPlatform.buildRustPackage {
+            pname = "nickel-embed-capi";
             version = "0.1.0";
             src = pkgs.lib.fileset.toSource {
               root = ./.;
@@ -87,10 +87,7 @@
                 ./Cargo.lock
                 ./README.md
                 ./nickel-embed
-                # Not built here, but a workspace member, so Cargo reads its manifest.
-                ./nickel-embed-capi/Cargo.toml
-                ./nickel-embed-capi/src
-                ./nickel-embed-nif
+                ./nickel-embed-capi
               ];
             };
             cargoLock.lockFile = ./Cargo.lock;
@@ -102,38 +99,22 @@
               builtins.replaceStrings [ "-" ] [ "_" ] pkgs.stdenv.hostPlatform.rust.rustcTarget
             }" =
               "0";
+            # The `doc` feature's syntax highlighting links oniguruma, which nixpkgs's Cargo
+            # setup tells onig_sys to take from the system (RUSTONIG_SYSTEM_LIBONIG).
+            nativeBuildInputs = [ pkgs.pkg-config ];
+            buildInputs = [ pkgs.oniguruma ];
             cargoBuildFlags = [
               "-p"
-              "nickel-embed-nif"
+              "nickel-embed-capi"
             ];
-            # Tested from Erlang: see checks.nickel-embed-nif.
+            # Tested by `cargo test` and the C tests in CI.
             doCheck = false;
-            # The Erlang VM loads `.so` files on every Unix, macOS included.
             postInstall = ''
-              if [ -f $out/lib/libnickel_embed_nif.dylib ]; then
-                mv $out/lib/libnickel_embed_nif.dylib $out/lib/libnickel_embed_nif.so
-              fi
+              mkdir -p $out/include
+              cp nickel-embed-capi/include/nickel_lang.h $out/include/
             '';
           };
-          default = nickel-embed-nif;
-        }
-      );
-
-      checks = forEachSupportedSystem (
-        { pkgs, system }:
-        {
-          # The NIF's Erlang tests, against the packaged library.
-          nickel-embed-nif =
-            pkgs.runCommand "nickel-embed-nif-test" { nativeBuildInputs = [ pkgs.erlang ]; }
-              ''
-                cp ${./nickel-embed-nif/test}/*.erl .
-                erlc *.erl
-                export HOME=$TMPDIR
-                NICKEL_EMBED_NIF=${self.packages.${system}.nickel-embed-nif}/lib/libnickel_embed_nif \
-                  erl -noshell -pa . -eval \
-                  'case eunit:test(nif_test, [verbose]) of ok -> halt(0); _ -> halt(1) end.'
-                touch $out
-              '';
+          default = nickel-embed-capi;
         }
       );
 

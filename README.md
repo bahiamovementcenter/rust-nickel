@@ -3,8 +3,9 @@
 Embed the [Nickel](https://nickel-lang.org) configuration language in Rust programs.
 
 `nickel-embed` aims to cover Nickel's whole embedding surface with an idiomatic, stable Rust API,
-and to be the native core for Nickel bindings in other languages (an Erlang/Gleam NIF is here;
-a C API is planned).
+and to be the native core for Nickel bindings in other languages: its C library is here, and
+each language's binding is its own package in its own repository (see
+[docs/bindings.md](docs/bindings.md)).
 
 Its core API keeps the names of Nickel's official [`nickel-lang`](https://crates.io/crates/nickel-lang)
 crate, from which it was derived, and runs on the latest `nickel-lang-core` (0.19). Later releases
@@ -61,17 +62,14 @@ let info = program.query()?;                      // nickel query: doc, contract
     (Cargo feature `doc`).
 
 - **Phase 4:** bindings for other languages.
-  - [`nickel-embed-nif`](nickel-embed-nif): an Erlang NIF, the in-process backend of the Gleam
-    package [`nickel`](https://github.com/bahiamovementcenter/gleam-nickel). Each session runs on
-    its own thread, owning one `Program` and the expressions taken from it, and replies to the
-    calling Erlang process with a message, so schedulers are never blocked. Expressions cross into
-    Erlang as resources, which gives lazy, go-nickel-style evaluation; values convert to Gleam
-    terms with exact integers. Build it with `cargo build --release -p nickel-embed-nif` or
-    `nix build .#nickel-embed-nif`; `nickel-embed-nif/test/run.sh` runs its Erlang tests.
   - [`nickel-embed-capi`](nickel-embed-capi): a C library whose header is a superset of Nickel's
-    own `nickel_lang.h`. Programs built for Nickel's C API, go-nickel included, work with it
-    unchanged, and new functions expose programs, field metadata, structured diagnostics,
-    warnings, docs and formatting.
+    own `nickel_lang.h`. Programs built for Nickel's C API work with it unchanged, and new
+    functions expose programs, field metadata, structured diagnostics, warnings, docs and
+    formatting. Version tags release it prebuilt for four platforms.
+  - The bindings over it: [go-ncl](https://github.com/bahiamovementcenter/go-ncl) (Go, through
+    the C library), [gleam-ncl](https://github.com/bahiamovementcenter/gleam-ncl) (Gleam, with
+    its own Erlang NIF) and [py-ncl](https://github.com/bahiamovementcenter/py-ncl) (Python,
+    with its own PyO3 module). Each pins a rust-nickel release.
 
 - **Phase 5:** package imports (`import foo`).
   - `PackageMap` maps package names to directories, for the program and for each package's own
@@ -83,8 +81,7 @@ let info = program.query()?;                      // nickel query: doc, contract
     `PackageMap::find_manifest` (in every build) finds the nearest manifest. Failures have
     `ErrorKind::Package`.
   - The C library has the same as `nickel_package_map_*` (with `packages` on by default there),
-    and the NIF takes a manifest or a package list when it builds a program, for gleam-nickel's
-    native backend.
+    and the bindings expose it in their own terms.
     Nickel's package manager is still experimental (`package-experimental` in the `nickel`
     command), so manifest and lock formats may change; it also prints a few status lines to
     standard error that can't be turned off.
