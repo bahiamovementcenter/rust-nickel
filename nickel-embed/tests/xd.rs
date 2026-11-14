@@ -239,3 +239,32 @@ fn mistakes_are_nickel_errors() {
         Err(Error::Nickel(_))
     ));
 }
+
+/// The `packages` feature fetches https git dependencies too: a manifest that depends on xD
+/// the documented way resolves to the same package.
+#[test]
+fn a_manifest_can_depend_on_the_pin_over_https() {
+    if std::env::var("NICKEL_EMBED_XD_REPO").is_ok() {
+        return; // offline run: this test is about fetching from GitHub
+    }
+    let dir = tempfile::tempdir().unwrap();
+    let manifest = dir.path().join("Nickel-pkg.ncl");
+    std::fs::write(
+        &manifest,
+        format!(
+            r#"{{ name = "app", version = "0.1.0", minimal_nickel_version = "1.18.0", authors = [],
+  dependencies = {{ xd = 'Git {{ url = "{}", ref = 'Commit "{}", path = "{}" }} }} }}
+| std.package.Manifest"#,
+            xd::GIT_URL,
+            xd::COMMIT,
+            xd::PATH
+        ),
+    )
+    .unwrap();
+    let map = PackageMap::from_manifest_with_cache(&manifest, dir.path().join("cache")).unwrap();
+    let mut ctx = Context::new().with_package_map(map);
+    let expr = ctx
+        .eval_deep("(import xd).units.jd.pattern.render [1, 1, 11]")
+        .unwrap();
+    assert_eq!(expr.as_str(), Some("11.11"));
+}
