@@ -94,6 +94,14 @@
               ];
             };
             cargoLock.lockFile = ./Cargo.lock;
+            # rustls's crypto (aws-lc-sys), for fetching packages over https. nixpkgs's
+            # Cargo setup asks it to link a system AWS-LC (AWS_LC_SYS_USE_SYSTEM=1), and there
+            # is none here; the target-specific variable wins over that, so it builds its own
+            # copy from source.
+            env."AWS_LC_SYS_USE_SYSTEM_${
+              builtins.replaceStrings [ "-" ] [ "_" ] pkgs.stdenv.hostPlatform.rust.rustcTarget
+            }" =
+              "0";
             cargoBuildFlags = [
               "-p"
               "nickel-embed-nif"
