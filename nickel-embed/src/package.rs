@@ -109,6 +109,11 @@ impl PackageMap {
     pub(crate) fn into_core(self) -> CoreMap {
         self.inner
     }
+
+    #[cfg(feature = "xd")]
+    pub(crate) fn from_core(inner: CoreMap) -> Self {
+        Self { inner }
+    }
 }
 
 /// The map as `nickel package debug-resolution` prints it.
@@ -125,7 +130,7 @@ fn normalize(dir: &Path) -> PathBuf {
 }
 
 #[cfg(feature = "packages")]
-mod manifest {
+pub(crate) mod manifest {
     use std::path::{Path, PathBuf};
 
     use nickel_lang_core::{error::IOError, files::Files};
@@ -171,7 +176,7 @@ mod manifest {
         Ok(PackageMap { inner })
     }
 
-    fn package_error(error: PackageError) -> Error {
+    pub(crate) fn package_error(error: PackageError) -> Error {
         let (error, files) = match error {
             // The manifest is Nickel code, so its errors point into it.
             PackageError::ManifestEval { files, error, .. } => (error, files),

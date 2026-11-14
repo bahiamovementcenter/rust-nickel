@@ -38,6 +38,8 @@ mod diagnostic;
 mod format;
 mod package;
 mod program;
+#[cfg(feature = "xd")]
+pub mod xd;
 
 pub use diagnostic::{Diagnostic, ErrorKind, Label, Location, Severity};
 #[cfg(feature = "format")]

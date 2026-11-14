@@ -96,6 +96,35 @@ let mut program = Program::builder()
     .build()?;
 ```
 
+## xD's primitives (feature `xd`)
+
+[xD](https://github.com/bahiamovementcenter/xD) publishes its Nickel library for numbering
+systems such as Johnny.Decimal as the Nickel package `xd`. The `xd` feature pins one version
+of it (`xd::VERSION` at `xd::COMMIT`), fetches it into Nickel's package cache on first use, and
+adds typed wrappers for its `render`, `name`, `parse` and `write`:
+
+```rust
+use nickel_embed::xd::Pattern;
+
+let mut jd = Pattern::jd()?;
+assert_eq!(jd.name(&[1, 1, 11], "Passport")?, "11.11 Passport");
+let entry = jd.parse("11.11 Passport")?.unwrap();       // Entry { address: [1, 1, 11], label: Some("Passport"), .. }
+assert_eq!(jd.write(&entry)?, "11.11 Passport");
+
+let mut boards = Pattern::new(r#"xd.pattern [
+    xd.slot { name = "category", width = 2 }, xd.sep.within,
+    xd.slot { name = "board", width = 2, alphabet = xd.alphabets.hex },
+]"#)?;
+assert_eq!(boards.render(&[11, 255])?, "11.FF");
+```
+
+`xd::package_map()?` is a `PackageMap` in which `import xd` works (`Context::with_xd()?` for
+short); add your own packages to it. Units stack with `&`, as in xD:
+`xd.units.jd & xd.units.work_packages`. No copy of xD's files lives in this repository: moving to
+a new xD version means changing `xd::COMMIT`, `xd::TREE` and `xd::VERSION`, which the tests check
+against a real fetch. To run them without GitHub, point `NICKEL_EMBED_XD_REPO` at a local clone
+of xD that has the pinned commit.
+
 `Context`, `Expr`, `Program` and `Error` are not `Send`: use one per thread.
 
 ## Development
