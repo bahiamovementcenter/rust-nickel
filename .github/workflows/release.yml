@@ -1,0 +1,82 @@
+name: Release
+
+# Pushing a tag vX.Y.Z builds nickel-embed-capi as a static library for each platform the Go
+# binding supports, and attaches it to a GitHub release. See docs/bindings.md.
+
+on:
+  push:
+    tags: ["v*"]
+  # A dry run: builds the archives and keeps them as workflow artifacts, without a release.
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  capi:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: ubuntu-latest, target: x86_64-unknown-linux-gnu, platform: linux_amd64 }
+          - { os: ubuntu-24.04-arm, target: aarch64-unknown-linux-gnu, platform: linux_arm64 }
+          - { os: macos-latest, target: aarch64-apple-darwin, platform: darwin_arm64 }
+          # cgo on Windows uses MinGW, so the archive is built for the GNU toolchain.
+          - { os: windows-latest, target: x86_64-pc-windows-gnu, platform: windows_amd64 }
+    runs-on: ${{ matrix.os }}
+    env:
+      # One optimized object instead of hundreds: the archive is committed by go-ncl, so its size
+      # matters more than build time.
+      CARGO_PROFILE_RELEASE_LTO: fat
+      CARGO_PROFILE_RELEASE_CODEGEN_UNITS: "1"
+      CARGO_PROFILE_RELEASE_STRIP: debuginfo
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      # Only the static library: building the crate's cdylib for the GNU target on a Windows
+      # runner would need MinGW's linker for nothing.
+      - name: Build
+        shell: bash
+        run: |
+          cargo rustc -p nickel-embed-capi --release --target ${{ matrix.target }} \
+            --crate-type staticlib -- --print native-static-libs 2> build.log || { cat build.log; exit 1; }
+          cat build.log
+      - name: Package
+        shell: bash
+        run: |
+          version="${GITHUB_REF_NAME}"
+          [[ "$GITHUB_REF_TYPE" == tag ]] || version="dev-${GITHUB_SHA::7}"
+          name="nickel-embed-capi-${version}-${{ matrix.platform }}"
+          mkdir "$name"
+          cp "target/${{ matrix.target }}/release/libnickel_lang.a" "$name/"
+          cp nickel-embed-capi/include/nickel_lang.h "$name/"
+          # The system libraries a program linking the archive needs.
+          sed -n 's/.*native-static-libs: //p' build.log | tail -n1 > "$name/link-flags.txt"
+          test -s "$name/link-flags.txt"
+          tar -czf "$name.tar.gz" "$name"
+          echo "ARCHIVE=$name.tar.gz" >> "$GITHUB_ENV"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: capi-${{ matrix.platform }}
+          path: ${{ env.ARCHIVE }}
+
+  release:
+    if: github.ref_type == 'tag'
+    needs: capi
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: capi-*
+          merge-multiple: true
+      - run: sha256sum *.tar.gz > SHA256SUMS
+      - name: Create the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" \
+            --title "$GITHUB_REF_NAME" --generate-notes *.tar.gz SHA256SUMS
