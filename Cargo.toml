@@ -4,5 +4,5 @@ members = ["nickel-embed", "nickel-embed-capi", "nickel-embed-nif"]
 
 [workspace.package]
 edition = "2024"
-license = "MIT"
+license = "AGPL-3.0-only"
 repository = "https://github.com/bahiamovementcenter/rust-nickel"
