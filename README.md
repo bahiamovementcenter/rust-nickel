@@ -136,3 +136,10 @@ of xD that has the pinned commit.
 nix develop      # or direnv allow
 cargo test
 ```
+
+## Licence
+
+Copyright © 2026 Ash. Licensed under the
+[GNU Affero General Public License v3.0 only](LICENSE) (`AGPL-3.0-only`).
+
+Code derived from Nickel keeps its MIT licence: see [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md). Copies published before this change stay available under the MIT licence they had then.
